@@ -2,7 +2,9 @@ temp**
 tmp**
 __pycache__/
 benchmarks**
-results/
+results**
 cluster_logs/
 archived_logs/
 logs/
+Rplots.pdf
+data/*
