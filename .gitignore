@@ -8,3 +8,10 @@ archived_logs/
 logs/
 Rplots.pdf
 data/*
+EBV/
+fibertools-rs/
+from_pb/
+hackathon.code-workspace
+ml_data/
+models/
+.snakemake
