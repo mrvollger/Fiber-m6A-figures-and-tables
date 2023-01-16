@@ -1,0 +1,156 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE}
+system("mkdir -p Figures")
+```
+
+```{r}
+source('Rscripts/utils.R')
+cnn = read_m6a("EBV/data/EBV.cnn.tbl.gz", my_tag="EBV")
+ipd = read_m6a("EBV/data/EBV.ipd.tbl.gz", my_tag="IPD")
+chr20 = read_m6a("EBV/data/chr20.subsample.cnn.tbl.gz", my_tag="Genomic")
+cnn_df = bind_rows(list(EBV=cnn, Genomic=chr20), .id="id")
+ebv_df = bind_rows(list(CNN=cnn, IPD=ipd), .id="id") 
+coverage = fread("EBV/data/coverage.tbl.gz", col.names=c("ct", "start","coverage"))
+```
+
+```{r}
+ebv_df %>%
+    filter(start != -1) %>%
+        filter(bin < 50 & start < 5e4) %>%
+        ggplot(
+            aes(
+                ymin=bin-0.4, ymax=bin + 0.4,
+                xmin=start, xmax = end,
+            )
+        ) +
+        geom_segment(aes(y=bin, yend=bin, x=st, xend=en), size=0.01, alpha = 0.1) +
+        geom_rect(aes(fill=type, size=size, alpha=alpha)) +
+        facet_row(~id) +
+        scale_alpha_continuous(range=c(0.3,1)) + 
+        scale_fill_manual(values = c("darkred", "navyblue")) +
+        scale_y_continuous("Genomic position") +
+        scale_x_continuous("Fibers") +
+        coord_cartesian(xlim=c(30e3,35e3)) +
+        theme_minimal_vgrid() +
+        theme(legend.position="top")
+ggsave("tmp.pdf", width=20, height = 12)
+ggsave("Figures/ebv_example_fibers.pdf", width = 16, height = 12)
+```
+
+```{r}
+p = cnn_df %>%
+    filter(start != -1) %>%
+    filter(type=="Nucleosome") %>%
+    filter(end - start >80 & end - start < 200) %>% 
+    ggplot(aes(end-start, fill=id)) +
+    #geom_histogram(binwidth=1, , position="identity")  +
+    geom_density(alpha=0.5, adjust=0.5) +
+    scale_x_continuous("Nucleosome length") + 
+    theme_minimal_vgrid() +
+    theme(legend.position="top")
+
+z = p + geom_text_repel(
+    data = get_maxima_from_plot(p),
+    aes(x=x, y=y, label=round(x), fill=NA), 
+    size = 5,
+    color="black",  
+    min.segment.length = 0, # draw all line segments
+    )
+
+ggsave("tmp.pdf", width = 12, height = 8)
+ggsave("Figures/ebv_nuc_size.pdf", width = 12, height = 8)
+```
+
+```{r}
+p = cnn_df %>%    
+    filter(type=="m6A") %>%
+    filter(dist >80 & dist < 200) %>%
+    ggplot(aes(x=dist, fill=id)) +
+    #geom_histogram(binwidth=1)     +
+    geom_density(alpha=0.5, adjust=0.5) +
+    scale_x_continuous("Distance between adjacent m6A", lim = c(80,200)) + 
+    theme_minimal_vgrid() +
+    theme(legend.position="top")
+
+z = p + geom_text_repel(
+    data = get_maxima_from_plot(p),
+    aes(x=x, y=y, label=round(x), fill=NA), 
+    color="black", size = 5,
+    min.segment.length = 0, # draw all line segments
+    )
+
+ggsave("tmp.pdf", width = 12, height = 8)
+ggsave("Figures/ebv_dist_m6a.pdf", width = 12, height = 8)
+```
+
+```{r}
+m_max = max(cnn$end)
+p = cnn %>%
+    filter(type!="Nucleosome") %>%
+    mutate(cut = bin_size * .bincode(start, seq(0,m_max,bin_size) )) %>%
+    group_by(cut) %>%
+    summarise(
+        mean = mean(end-start),
+        
+        mode = mode(end-start),
+        median = median(end-start),
+        n = n()
+    ) %>%
+    filter(n > 50) %>%
+    ggplot(aes(x=cut, y=median)) +
+    geom_point() +
+    scale_x_continuous("Genomic Position", label=comma) +
+    scale_y_continuous("Median nucleosome size") +
+    theme_minimal_vgrid()
+ggsave("tmp.pdf", width=12)
+ggsave("Figures/ebv_nuc_size_by_position.pdf", width=12)
+```
+
+```{r}
+bin_size=100
+p = cnn %>%
+    filter(type!="m6A") %>%
+    mutate(cut = bin_size * .bincode(start, seq(0,m_max,bin_size) )) %>%
+    group_by(cut) %>%
+    mutate(
+        coverage = n()
+    ) %>%
+    group_by(cut,type, coverage) %>%
+    summarise(
+        n = n(), 
+    ) %>%
+    mutate(
+        msp_cov = n / coverage
+    ) %>%
+    filter(type =="MSP") %>%
+    ggplot(aes(x=cut, y=msp_cov, color=type)) +
+    geom_point() +
+    scale_x_continuous("Genomic Position", label=comma) +
+    scale_y_continuous("Fraction of accessible fibers") +
+    theme_minimal_vgrid()
+ggsave("tmp.pdf", width=12)
+```
+
+
+```{r}
+p = cnn %>%
+    merge(coverage, by="start") %>%
+    filter(coverage > 100) %>%
+    filter(start > 10e3 & end < 35e3) %>%
+    #filter(type=="m6A") %>%
+    ggplot(aes(x=(start+end)/2, weight = 1.0/coverage)) +
+    #geom_histogram(aes(weight=1/coverage), binwidth=1) +
+    geom_density(adjust=0.2) +
+    facet_col(~type, scales="free_y")+
+    scale_x_continuous("Genomic Position", label=comma) +
+    scale_y_continuous("Density of m6A adjusted for coverage") +
+    theme_minimal_vgrid()
+ggsave("tmp.pdf", width=12)
+```
+

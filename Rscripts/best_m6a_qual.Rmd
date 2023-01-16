@@ -1,0 +1,155 @@
+
+# find qual with the best auto correlation 
+```{r}
+source('Rscripts/utils.R')
+system("mkdir -p Tables")
+system("mkdir -p Figures/threshold_choice/")
+```
+
+```{r}
+min_ml = 190
+sm="PS00075_1"
+sm="PS00109_1"
+sm="GM12878"
+gmm = read_m6a("data/{sm}.gmm.tbl.gz", my_tag="GMM", ref=F, min_ml=min_ml, nrows=1000)
+cnn = read_m6a("data/{sm}.cnn.tbl.gz", my_tag="CNN", ref=F, min_ml = min_ml, nrows=1000)
+xgb = read_m6a("data/{sm}.xgb.tbl.gz", my_tag="XGB", min_ml = min_ml, ref=F, nrows=1000)
+semi = read_m6a("data/{sm}.semi.tbl.gz", my_tag="SEMI", min_ml=min_ml, ref=F, nrows=1000)
+if(sm != "PS00075_1") {
+    pb = NULL
+} else{
+    pb = read_m6a("from_pb/PS00075_1.fiberseq.strip_meth_tags.gamma_v4_cov1.bam.tbl.gz",
+        my_tag="PacBio",
+        min_ml = min_ml,
+        nrows=8084, ref=F
+     )
+}
+
+```
+
+```{r}
+m6a_df = bind_rows(list(cnn, xgb, gmm, pb, semi)) %>%
+    filter(type == "m6A")
+m6a_df = m6a_df[order(tag, type, fiber, start)]
+dim(m6a_df)/1e6
+```
+
+# make a bunch of sub dfs at different qual thresholds
+```{r}
+t=seq(min_ml,255,1)
+full_grid = auto.df = m6a_df %>%
+    select(m6a_qual, start, en, st, fiber, tag) %>%
+    expand_grid(threshold=t) %>%
+    filter(m6a_qual >= threshold) %>%
+    group_by(tag, threshold, fiber) %>%
+    arrange(start) %>%
+    mutate(
+        dist = start - lag(start), 
+        count_per_fiber = n()
+    ) %>%
+    group_by(tag, threshold) %>%
+    mutate(n_pred = n()) %>%
+    data.table()
+full_grid = full_grid[order(tag, threshold, fiber, start)]
+full_grid_counts = full_grid %>% group_by(tag, threshold) %>% summarise(n_pred = n())
+full_grid_counts
+```
+
+
+```{r}
+source('Rscripts/utils.R')
+GMM_count = full_grid_counts[full_grid_counts$tag == "GMM",]$n_pred[1]
+GMM_count/1e6
+max_pred = 1.5*GMM_count
+
+p = full_grid %>%
+    filter(dist > 40 & dist < 300) %>%
+    filter(tag != "GMM") %>%
+    filter( (n_pred > GMM_count) & (n_pred < max_pred) ) %>%
+    #group_by(tag, threshold) %>%
+    #filter(n() > 1e5) %>%
+    #sample_n(1e5) %>%
+    ggplot(aes(x=dist, group= paste(threshold, tag))) +
+    geom_density(aes(color=threshold), adjust=0.5) +
+    geom_text_repel(
+        data=full_grid_counts %>% filter(tag != "GMM") %>% filter( (n_pred > GMM_count) & (n_pred < max_pred) ) ,
+        aes(x=threshold, y=0, label=paste(threshold, round(n_pred/1e6,2)), color=threshold) 
+    ) + 
+    scale_x_continuous("Distance between adjacent m6A") +
+    scale_y_continuous("Density") +
+    scale_colour_binned(type = "viridis", n.breaks=length(t)) +
+    #scale_color_manual("", values=MODEL_COLORS) +
+    facet_wrap(~tag) +
+    coord_cartesian(xlim=c(60,250)) +
+    theme_cowplot() +
+    theme(
+        #legend.position="top"
+    )
+
+if (F){
+z = p + 
+    geom_text_repel(
+        data = get_maxima_from_plot(p, n_keep=1),
+        aes(x=x, y=y, label=paste(round(x)) ), 
+        size = 3,
+        #nudge_y=0.001,
+        min.segment.length = 0, # draw all line segments
+    )
+}
+my_ggsave("Figures/threshold_choice/{sm}-distance-between-adjacent-m6A.pdf", height=12, width=16)
+```
+
+```{r}
+full_grid_counts  %>%
+    mutate(val = round(n_pred/1e6,2)) %>%
+    ggplot(aes(y=val, x=threshold, fill=tag)) +
+    geom_bar(stat="identity") +
+    geom_text_repel(aes(label=threshold), min.segment.length=0) +
+    facet_wrap(~tag) +
+    theme_cowplot()
+my_ggsave("tmp.pdf", height=12, width=16)
+```
+
+
+## auto correlation method to pick qual did not work
+# so ignore this section
+```{r}
+LAG=250
+auto.df = full_grid %>%
+    group_by(tag, threshold) %>%
+    mutate(row_num = seq(n())) %>%
+    filter(row_num < 1e5) %>%
+    group_by(tag, fiber, threshold) %>%
+    summarise(
+        count = n(),
+        index = list(seq(0, en[1] - st[1]) %in% start),
+    )  %>%
+    filter(count > 200) %>%
+    ungroup() %>%
+    group_by(tag, threshold) %>%
+    summarise(
+        auto = acf(as.numeric(unlist(index)), lag.max = LAG, plot = F, type="covariance")$acf,
+        m6a_count = sum(count)
+    ) %>%
+    group_by(tag, threshold, m6a_count) %>%
+    mutate(
+        lag = seq(n()),
+        auto = as.numeric(auto)
+    ) %>%
+    filter(lag > 50) %>%
+    filter(auto == min(auto) | auto == max(auto)) %>%
+    data.table()
+auto.df
+```
+
+
+```{r}
+auto.df %>%
+    fwrite("Tables/best-m6A-qual-by-autocorrelation.tbl", sep="\t", row.names=F, quote=F)
+```
+
+```{r}
+auto.df %>%
+    group_by(tag) %>%
+    slice_max(order_by=auto, n = 1, with_ties=F)
+```

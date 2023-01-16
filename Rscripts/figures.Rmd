@@ -1,0 +1,146 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE}
+system("mkdir -p Figures")
+```
+
+
+
+```{r}
+source('Rscripts/utils.R')
+sm="PS00075_1"
+gmm = read_m6a("data/{sm}.gmm.tbl.gz", my_tag="GMM", ref=F)
+cnn = read_m6a("data/{sm}.cnn.tbl.gz", my_tag="CNN", ref=F, min_ml = 200)
+xgb = read_m6a("data/{sm}.xgb.tbl.gz", my_tag="XGB", min_ml = 250, ref=F)
+semi = read_m6a("data/{sm}.semi.tbl.gz", my_tag="SEMI", min_ml=230, ref=F)
+pb = read_m6a("from_pb/{sm}.fiberseq.strip_meth_tags.gamma_v4_cov1.bam.tbl.gz", my_tag="PacBio", min_ml = 250, nrows=8084, ref=F)
+revio=NULL
+```
+
+
+```{r}
+source('Rscripts/utils.R')
+sm="PS00109_1"
+sm="GM12878"
+gmm = read_m6a("data/{sm}.gmm.tbl.gz", my_tag="GMM", ref=F)
+cnn = read_m6a("data/{sm}.cnn.tbl.gz", my_tag="CNN", ref=F, min_ml = 215)
+xgb = read_m6a("data/{sm}.xgb.tbl.gz", my_tag="XGB", min_ml = 245, ref=F)
+semi = read_m6a("data/{sm}.semi.tbl.gz", my_tag="SEMI", min_ml=244, ref=F)
+revio = read_m6a("data/Revio.semi.tbl.gz", my_tag="Revio", ref=F)
+pb = NULL
+```
+
+```{r}
+dists_df = bind_rows(list(cnn, xgb, gmm, pb, semi, revio)) %>%
+    data.table() %>%
+    group_by(tag, type, fiber) %>%
+    arrange(start) %>%
+    mutate(
+        dist = start - lag(start), 
+        count_per_fiber = n()
+    ) %>%
+    data.table()
+dists_df = dists_df[order(tag, type, fiber, start)]
+
+dists_df %>% group_by(tag) %>% summarise(n())
+```
+
+```{r}
+source('Rscripts/utils.R')
+calls_per_group = dists_df %>% 
+    filter(type=="m6A" & dist > 30 & dist < 300) %>%
+    group_by(tag) %>% summarise(count=n())
+min_count = min(calls_per_group$count)
+p = dists_df %>%
+    filter(type=="m6A" & dist > 30 & dist < 300) %>%
+    group_by(tag) %>%
+    mutate(row_id = seq(n())) %>%
+    filter(row_id <= min_count) %>%
+    ggplot(aes(x=dist)) +
+    geom_density(aes(color=tag), adjust=0.5) +
+    scale_x_continuous("Distance between adjacent m6A") +
+    scale_y_continuous("Density") +
+    scale_color_manual("", values=MODEL_COLORS) +
+    coord_cartesian(xlim=c(60,250)) +
+    theme_cowplot() +
+    theme(legend.position="top")
+if (T){
+z = p + 
+    geom_text_repel(
+        data = get_maxima_from_plot(p, n_keep=1),
+        aes(x=x, y=y, label=round(x)), 
+        size = 3,
+        #nudge_y=0.001,
+        min.segment.length = 0, # draw all line segments
+    )
+} else {
+    z=p+ facet_zoom(x = dist > 60 & dist < 250,  horizontal = FALSE, shrink=TRUE, ylim=c(0,0.015))
+}
+
+my_ggsave("Figures/{sm}-distance-between-adjacent-m6A.pdf", height=6, width=8)
+
+```
+
+
+
+
+
+```{r}
+LAG=300
+t = dists_df %>%
+    filter(type=="m6A") %>%
+    group_by(tag) %>%
+    mutate(row_num = seq(n())) %>%
+    filter(row_num < 2e6) %>%
+    group_by(tag, fiber) %>%
+    summarise(
+        count = n(),
+        index = list(seq(0, max(start)) %in% start)
+    )  %>%
+    filter(count > 400) %>%
+    ungroup() %>%
+    group_by(tag) %>%
+    summarise(
+        auto = acf(as.numeric(unlist(index)), lag.max = LAG, plot = F)$acf,
+    ) %>%
+    group_by(tag) %>%
+    mutate(
+        lag = seq(n())
+    ) %>%
+    data.table()
+t %>% group_by(tag) %>% summarise(n())
+```
+
+```{r}
+t$change <- c(0, (t$auto[1:(length(t$auto)-1)] * t$auto[2:length(t$auto)]) <= 0)
+t[change==1]
+
+t %>%
+    filter(lag > 25) %>%
+    ggplot(aes(x=lag, y=auto, color=tag)) +
+    geom_hline(aes(yintercept=0), color="darkblue", size=1, linetype="dashed") + 
+    geom_line() +
+    geom_text_repel( data = . %>% filter(change == 1),
+        aes(y=0, x = lag, label=lag),
+        min.segment.length = 0, # draw all line segments
+        nudge_x=20,
+    )+
+    scale_color_manual("", values=MODEL_COLORS) +
+    theme_minimal_grid() + 
+    scale_y_continuous("Autocorrelation between m6A events") + 
+    scale_x_continuous("Lag between m6A events") + 
+    theme(legend.position = "top")
+my_ggsave("Figures/{sm}-autocorrelation-between-m6A.pdf", height=6, width=8)
+```
+
+
+```{r}
+n = 2; 147*n + 60*(n-1)
+```
+
+
