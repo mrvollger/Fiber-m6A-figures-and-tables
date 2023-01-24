@@ -10,6 +10,13 @@ if [ $1 == "109" ]; then
 elif [ $1 == "GM12878" ]; then
   sm="GM12878"
   m=10
+elif [ $1 == "revio" ]; then
+  sm="Revio"
+  unset FT_REVIO
+  export FT_REVIO="true"
+  $ft -t $(nproc) predict-m6a -v data/Revio.bam data/$sm.semi.bam -s -a
+  $ft -t $(nproc) extract -s -m 240 --all - data/$sm.semi.bam | bgzip -@ $(nproc) > data/$sm.semi.tbl.gz
+  exit
 else
   sm="PS00075_1"
 fi
@@ -40,6 +47,7 @@ if [ $2 == "g"  ]; then
 fi
 
 echo "predicting"
+unset FT_REVIO
 
 $ft -t $(nproc) extract -s -m $m --all - data/$sm.gmm.bam | bgzip -@ $(nproc) > data/$sm.gmm.tbl.gz
 

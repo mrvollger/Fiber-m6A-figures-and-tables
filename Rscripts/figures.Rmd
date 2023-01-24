@@ -9,8 +9,6 @@ editor_options:
 system("mkdir -p Figures")
 ```
 
-
-
 ```{r}
 source('Rscripts/utils.R')
 sm="PS00075_1"
@@ -19,9 +17,7 @@ cnn = read_m6a("data/{sm}.cnn.tbl.gz", my_tag="CNN", ref=F, min_ml = 200)
 xgb = read_m6a("data/{sm}.xgb.tbl.gz", my_tag="XGB", min_ml = 250, ref=F)
 semi = read_m6a("data/{sm}.semi.tbl.gz", my_tag="SEMI", min_ml=230, ref=F)
 pb = read_m6a("from_pb/{sm}.fiberseq.strip_meth_tags.gamma_v4_cov1.bam.tbl.gz", my_tag="PacBio", min_ml = 250, nrows=8084, ref=F)
-revio=NULL
 ```
-
 
 ```{r}
 source('Rscripts/utils.R')
@@ -31,24 +27,32 @@ gmm = read_m6a("data/{sm}.gmm.tbl.gz", my_tag="GMM", ref=F)
 cnn = read_m6a("data/{sm}.cnn.tbl.gz", my_tag="CNN", ref=F, min_ml = 215)
 xgb = read_m6a("data/{sm}.xgb.tbl.gz", my_tag="XGB", min_ml = 245, ref=F)
 semi = read_m6a("data/{sm}.semi.tbl.gz", my_tag="SEMI", min_ml=244, ref=F)
-revio = read_m6a("data/Revio.semi.tbl.gz", my_tag="Revio", ref=F)
+if(sm == "PS00109_1"){
+    all_revio=NULL
+} else{
+    all_revio = read_m6a("data/Revio.semi.tbl.gz", my_tag="Revio", ref=F, min_ml=230)
+}
 pb = NULL
 ```
 
 ```{r}
-dists_df = bind_rows(list(cnn, xgb, gmm, pb, semi, revio)) %>%
-    data.table() %>%
-    group_by(tag, type, fiber) %>%
-    arrange(start) %>%
-    mutate(
-        dist = start - lag(start), 
-        count_per_fiber = n()
-    ) %>%
-    data.table()
+revio = all_revio %>% filter(type=="m6A") %>% filter(m6a_qual >= 254); dim(revio)
+```
+
+```{r}
+dists_df = rbindlist(list(cnn, xgb, gmm, pb, semi, revio)) 
+dists_df[
+    order(start),
+    c("dist", "count_per_fiber"):= list(start - lag(start), .N),
+    by=list(tag, type, fiber)
+]
+dists_df = dists_df[count_per_fiber/fiber_length > 0.02 & type == "m6A"]
 dists_df = dists_df[order(tag, type, fiber, start)]
 
 dists_df %>% group_by(tag) %>% summarise(n())
+dists_df %>% group_by(tag) %>% summarise(n()/sum(unique(fiber_length))*100)
 ```
+
 
 ```{r}
 source('Rscripts/utils.R')
@@ -80,6 +84,7 @@ z = p +
     )
 } else {
     z=p+ facet_zoom(x = dist > 60 & dist < 250,  horizontal = FALSE, shrink=TRUE, ylim=c(0,0.015))
+
 }
 
 my_ggsave("Figures/{sm}-distance-between-adjacent-m6A.pdf", height=6, width=8)
@@ -91,12 +96,18 @@ my_ggsave("Figures/{sm}-distance-between-adjacent-m6A.pdf", height=6, width=8)
 
 
 ```{r}
-LAG=300
+LAG=275
+calls_per_group2 = dists_df %>% 
+    filter(type=="m6A") %>%
+    group_by(tag) %>% summarise(count=n())
+min_count2 = min(calls_per_group2$count)
+min_count2=20e5
+
 t = dists_df %>%
     filter(type=="m6A") %>%
     group_by(tag) %>%
     mutate(row_num = seq(n())) %>%
-    filter(row_num < 2e6) %>%
+    filter(row_num < min_count2) %>%
     group_by(tag, fiber) %>%
     summarise(
         count = n(),
@@ -144,3 +155,67 @@ n = 2; 147*n + 60*(n-1)
 ```
 
 
+
+
+# m6A calls by coverage
+```{r}
+ft_cov = fread("data/PS00075_1.semi.filtered.tbl.gz") 
+gmm_cov = fread("data/PS00075_1.gmm.tbl.gz") 
+```
+
+```{r}
+m6a_by_cov = rbindlist(list(ft=ft_cov, gmm=gmm_cov), idcol=TRUE) %>%
+    as_tibble() %>%
+    mutate(coverage = round(ec)) %>%
+    mutate(coverage = case_when(
+        coverage > 15 ~ 15,
+        TRUE ~ coverage
+    )) %>%
+    group_by(.id, coverage) %>%
+    summarise(n_fibers = n(), m6A = sum(total_m6a_bp), AT_bp = sum(total_AT_bp)) 
+
+m6a_by_cov_ratio = m6a_by_cov %>% 
+    pivot_wider(id_cols = c("n_fibers", "coverage", "AT_bp"), names_from=".id", values_from = "m6A") %>%
+    mutate(
+        fc = ft/gmm
+    )
+
+m6a_by_cov_ratio   %>%
+    ggplot(aes(
+            x=coverage, y=fc,
+            color=ft, fill=ft
+        )
+    ) +
+    geom_point() + geom_line() +
+    geom_text_repel(
+        aes(label=paste(comma(100*fc), "%"))
+        )+
+    geom_hline(
+        data=NULL,
+        aes(yintercept=1),
+        linetype="dashed", color="darkred"
+    ) +
+    geom_xsidehistogram(
+        aes(y=AT_bp),
+        stat="identity",
+        binwidth=1,
+        width = .6,
+    ) +
+    scale_xsidey_continuous(
+        name="# of m6A bases",
+        label=comma
+    ) +
+    scale_y_continuous("% increase in m6A calls",
+        labels = function(x) paste0(100*x, "%")
+    ) + 
+    scale_x_continuous("CCS coverage",
+        breaks = seq(0,15),
+        labels = c(seq(0,14), "15+")
+    )+
+    theme_minimal_grid() + 
+    theme(
+        legend.position="none",
+        ggside.panel.scale = .15,
+    )
+my_ggsave("Figures/Increase-in-m6A-calls-by-coverage.pdf", height=6, width=8)
+```
