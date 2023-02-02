@@ -12,6 +12,7 @@ library(ggnewscale)
 library(ggside)
 library(glue)
 library("tidylog", warn.conflicts = FALSE)
+library(patchwork)
 
 Red="#c1272d"
 Indigo="#0000a7"
@@ -19,7 +20,14 @@ Yellow="#eecc16"
 Teal="#008176"
 Gray="#b3b3b3"
 
-MODEL_COLORS = c(PacBio=Indigo, CNN=Red,  XGB=Yellow, GMM=Teal, IPD=Gray, SEMI="orange", Revio="black")
+MODEL_COLORS = c(PacBio=Indigo, 
+    CNN=Red,  
+    XGB=Yellow,
+    GMM=Teal,
+    IPD=Gray,
+    SEMI="purple",
+    Revio="#f41c90" # black
+)
 
 read_m6a = function(file, my_tag = "", min_ml = 200, nrows=Inf, ref=TRUE){
     tmp = fread(glue(file), nrows=nrows)  %>%

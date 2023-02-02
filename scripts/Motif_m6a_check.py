@@ -8,6 +8,7 @@ from functools import partial
 import os
 import dask.dataframe as dd
 from dask.multiprocessing import get
+from multiprocessing import Pool
 import pandas as pd
 from numba import njit
 
@@ -21,7 +22,7 @@ def parse():
         description="", formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        "tbl", nargs="+", help="csv file with tpl, ipdRatio, and coverage"
+        "tbl", nargs="+", help="fibertools-rs all table"
     )
     parser.add_argument("-n", default=None, type=int)
     parser.add_argument("-b", default=0, type=int)
@@ -43,16 +44,20 @@ def get_stats(row, buffer=0, motifs=None):
     # search = "|".join(["(" + motif + ")" for motif in motifs])
     # search = "|".join(["(?=" + motif + ")" for motif in motifs])
     search = "|".join(motifs)
-    for m in re.finditer(search, row.fiber_sequence):
-        s = m.start()
-        e = m.end()
-        if s == e:
-            continue
-        # only set m6A positions
-        if len(m.group()) == 6:
-            mask[s + 2 : e - 2] = 1
-        else:
-            mask[s:e] = 1
+    if motifs[0] == "All-AT-bp":
+        mask[0:mask.shape[0]] = 1
+    else:
+        for m in re.finditer(search, row.fiber_sequence):
+            s = m.start()
+            e = m.end()
+            if s == e:
+                continue
+            # only set m6A positions
+            if len(m.group()) == 6:
+                mask[s + 2 : e - 2] = 1
+            else:
+                mask[s:e] = 1
+
     if row.m6a is None:
         m6a = np.array([], dtype=int)
         # return None
@@ -74,44 +79,58 @@ def get_stats(row, buffer=0, motifs=None):
     return row
 
 
+def by_table(inputs, buffer=0, n_rows=None):
+    tbl, m = inputs
+    sys.stderr.write(f"Reading {tbl} for {m}")
+
+    fd = ft.read_fibertools_rs_all_file(tbl, pandas=True, n_rows=n_rows)
+    # ddata = dd.from_pandas(fd, npartitions=30)
+    rtn=""
+    helper_fun = partial(get_stats, buffer=buffer, motifs=m)
+    results = fd.apply(helper_fun, axis=1)
+    # results = ddata.map_partitions(
+    #    lambda df: df.apply(helper_fun, axis=1)
+    # ).compute()
+
+    sys.stderr.write("\n")
+    on_target = results.on_target.sum()
+    off_target = results.off_target.sum()
+    motif_at_count = results.motif_at_count.sum()
+    at_count = results.at_count.sum()
+    total_targets = results.total_targets.sum()
+    on_target_rate = on_target / (on_target + off_target)
+    
+    rtn +=(f"{os.path.basename(tbl)}"
+        + f"\t{';'.join(m)}"
+        + f"\t{on_target_rate:.3%}"
+        + f"\t{on_target/total_targets:.3%}"
+        + f"\t{motif_at_count / at_count:.3%}"
+        + f"\t{total_targets:,}"
+        + f"\t{fd.total_m6a_bp.sum()/fd.total_AT_bp.sum():.3%}"
+        + f"\t{fd.total_m6a_bp.sum()}\n")
+    return rtn
+
 def main():
     args = parse()
     print(
         f"file\tmotif(s)\tm6A-within-motif(s)"
         + "\tmotif(s)-covered-by-m6A\tAT-bases-covered-by-motif(s)\t#-of-motifs"
         + "\tm6A-coverage"
+        + "\t#-of-m6A-bp"
     )
+    combos = [] 
     for tbl in args.tbl:
-        sys.stderr.write(f"Reading {tbl}")
-        fd = ft.read_fibertools_rs_all_file(tbl, pandas=True, n_rows=args.n)
-        # ddata = dd.from_pandas(fd, npartitions=30)
-
-        for m in [MOTIFS] + MOTIFS:
+        for m in ["All-AT-bp"] + [MOTIFS] + MOTIFS:
             if type(m) != list:
                 m = [m]
-            helper_fun = partial(get_stats, buffer=args.b, motifs=m)
-            results = fd.apply(helper_fun, axis=1)
-            # results = ddata.map_partitions(
-            #    lambda df: df.apply(helper_fun, axis=1)
-            # ).compute()
+            combos.append((tbl, m))
+    #print(combos)
 
-            sys.stderr.write("\n")
-            on_target = results.on_target.sum()
-            off_target = results.off_target.sum()
-            motif_at_count = results.motif_at_count.sum()
-            at_count = results.at_count.sum()
-            total_targets = results.total_targets.sum()
-            on_target_rate = on_target / (on_target + off_target)
-            print(
-                f"{os.path.basename(tbl)}"
-                + f"\t{';'.join(m)}"
-                + f"\t{on_target_rate:.3%}"
-                + f"\t{on_target/total_targets:.3%}"
-                + f"\t{motif_at_count / at_count:.3%}"
-                + f"\t{total_targets:,}"
-                + f"\t{fd.total_m6a_bp.sum()/fd.total_AT_bp.sum():.3%}"
-                + f"\t{fd.total_m6a_bp.sum()}"
-            )
+    with Pool(8) as p:
+        helper_by_table = partial(by_table, buffer=args.b, n_rows=args.n)
+        for s in p.map(helper_by_table, combos):
+            print(s)
+
     return 0
 
 

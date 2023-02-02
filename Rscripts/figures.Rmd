@@ -16,7 +16,8 @@ gmm = read_m6a("data/{sm}.gmm.tbl.gz", my_tag="GMM", ref=F)
 cnn = read_m6a("data/{sm}.cnn.tbl.gz", my_tag="CNN", ref=F, min_ml = 200)
 xgb = read_m6a("data/{sm}.xgb.tbl.gz", my_tag="XGB", min_ml = 250, ref=F)
 semi = read_m6a("data/{sm}.semi.tbl.gz", my_tag="SEMI", min_ml=230, ref=F)
-pb = read_m6a("from_pb/{sm}.fiberseq.strip_meth_tags.gamma_v4_cov1.bam.tbl.gz", my_tag="PacBio", min_ml = 250, nrows=8084, ref=F)
+#pb = read_m6a("from_pb/{sm}.fiberseq.strip_meth_tags.gamma_v4_cov1.bam.tbl.gz", my_tag="PacBio", min_ml = 250, nrows=8084, ref=F)
+pb=NULL
 ```
 
 ```{r}
@@ -36,11 +37,34 @@ pb = NULL
 ```
 
 ```{r}
-revio = all_revio %>% filter(type=="m6A") %>% filter(m6a_qual >= 254); dim(revio)
+revio = all_revio %>% filter(type=="m6A") %>% filter(m6a_qual >= 251); dim(revio)
 ```
 
 ```{r}
-dists_df = rbindlist(list(cnn, xgb, gmm, pb, semi, revio)) 
+simple=""
+simple="-simple"
+```
+
+```{r}
+if(simple==""){
+    cur_colors = MODEL_COLORS[c("GMM","CNN", "SEMI", "XGB", "Revio")]
+    cur_labels = c(
+        "CNN",
+        "Semi-supervised CNN",
+        "XGB",
+        "Subread model",
+        "Revio (Semi-supervised CNN)"
+    )
+    dists_df = rbindlist(list(cnn, xgb, gmm, semi, revio)) 
+}else{
+    cur_colors = MODEL_COLORS[c("GMM","SEMI", "Revio")]
+    cur_labels = c(
+        "Subread model",
+        "Semi-supervised CNN",
+        "Revio (Semi-supervised CNN)"
+    )
+    dists_df = rbindlist(list(gmm, semi, revio)) 
+}
 dists_df[
     order(start),
     c("dist", "count_per_fiber"):= list(start - lag(start), .N),
@@ -60,35 +84,55 @@ calls_per_group = dists_df %>%
     filter(type=="m6A" & dist > 30 & dist < 300) %>%
     group_by(tag) %>% summarise(count=n())
 min_count = min(calls_per_group$count)
-p = dists_df %>%
-    filter(type=="m6A" & dist > 30 & dist < 300) %>%
-    group_by(tag) %>%
-    mutate(row_id = seq(n())) %>%
-    filter(row_id <= min_count) %>%
-    ggplot(aes(x=dist)) +
-    geom_density(aes(color=tag), adjust=0.5) +
-    scale_x_continuous("Distance between adjacent m6A") +
-    scale_y_continuous("Density") +
-    scale_color_manual("", values=MODEL_COLORS) +
-    coord_cartesian(xlim=c(60,250)) +
-    theme_cowplot() +
-    theme(legend.position="top")
-if (T){
-z = p + 
-    geom_text_repel(
-        data = get_maxima_from_plot(p, n_keep=1),
-        aes(x=x, y=y, label=round(x)), 
-        size = 3,
-        #nudge_y=0.001,
-        min.segment.length = 0, # draw all line segments
+min_count
+for(with_revio in c(FALSE,TRUE)){
+    rrevio=""
+    tdf = dists_df
+    if(with_revio){
+        rrevio="-revio"
+    }else{
+        tdf = dists_df %>% filter(tag != "Revio")
+    }
+    p = tdf %>%
+        filter(type=="m6A" & dist > 30 & dist < 300) %>%
+        group_by(tag) %>%
+        mutate(row_id = seq(n())) %>%
+        filter(row_id <= min_count) %>%
+        ggplot(aes(x=dist)) +
+        geom_density(aes(color=tag), adjust=0.5) +
+        scale_x_continuous("Distance between adjacent m6A") +
+        scale_y_continuous("Density") +
+        scale_color_manual("", 
+            values=cur_colors,
+            labels=cur_labels,
+        ) +
+        coord_cartesian(xlim=c(60,250)) +
+        theme_minimal_grid() +
+        guides(color = guide_legend(override.aes = list(size = 1) ) )+
+        theme(
+            legend.position="top",
+            legend.text=element_text(size=9)
+            )
+    if (T){
+    z = p + 
+        geom_vline(data=NULL, aes(xintercept=147), linetype="dashed", color="black", alpha=0.5) +
+        geom_text_repel(
+            data = get_maxima_from_plot(p, n_keep=1),
+            aes(x=x, y=y, label=round(x)), 
+            size = 3,
+            #nudge_y=0.001,
+            min.segment.length = 0, # draw all line segments
+        )
+    } else {
+        z=p+ facet_zoom(x = dist > 60 & dist < 250,  horizontal = FALSE, shrink=TRUE, ylim=c(0,0.015))
+
+    }
+    my_ggsave(
+        "Figures/{sm}-distance-between-adjacent-m6A{simple}{rrevio}.pdf", 
+        height=5,
+        width=6
     )
-} else {
-    z=p+ facet_zoom(x = dist > 60 & dist < 250,  horizontal = FALSE, shrink=TRUE, ylim=c(0,0.015))
-
 }
-
-my_ggsave("Figures/{sm}-distance-between-adjacent-m6A.pdf", height=6, width=8)
-
 ```
 
 
@@ -96,7 +140,7 @@ my_ggsave("Figures/{sm}-distance-between-adjacent-m6A.pdf", height=6, width=8)
 
 
 ```{r}
-LAG=275
+LAG=250
 calls_per_group2 = dists_df %>% 
     filter(type=="m6A") %>%
     group_by(tag) %>% summarise(count=n())
@@ -130,23 +174,41 @@ t %>% group_by(tag) %>% summarise(n())
 ```{r}
 t$change <- c(0, (t$auto[1:(length(t$auto)-1)] * t$auto[2:length(t$auto)]) <= 0)
 t[change==1]
-
-t %>%
-    filter(lag > 25) %>%
-    ggplot(aes(x=lag, y=auto, color=tag)) +
-    geom_hline(aes(yintercept=0), color="darkblue", size=1, linetype="dashed") + 
-    geom_line() +
-    geom_text_repel( data = . %>% filter(change == 1),
-        aes(y=0, x = lag, label=lag),
-        min.segment.length = 0, # draw all line segments
-        nudge_x=20,
-    )+
-    scale_color_manual("", values=MODEL_COLORS) +
-    theme_minimal_grid() + 
-    scale_y_continuous("Autocorrelation between m6A events") + 
-    scale_x_continuous("Lag between m6A events") + 
-    theme(legend.position = "top")
-my_ggsave("Figures/{sm}-autocorrelation-between-m6A.pdf", height=6, width=8)
+for(with_revio in c(FALSE,TRUE)){
+    revio=""
+    tdf = t
+    if(with_revio){
+        revio="-revio"
+    }else{
+        tdf = t %>% filter(tag != "Revio")
+    }
+    tdf %>%
+        filter(lag > 25) %>%
+        ggplot(aes(x=lag, y=auto, color=tag)) +
+        geom_hline(aes(yintercept=0), color="darkblue", size=1, linetype="dashed") + 
+        geom_vline(data=NULL, aes(xintercept=147), linetype="dashed", color="black", alpha=0.5) +
+        geom_line() +
+        geom_label_repel( data = . %>% filter(change == 1),
+            aes(y=0, x = lag, label=lag),
+            min.segment.length = 0, # draw all line segments
+            nudge_x=5,
+            nudge_y=0.01,
+            show.legend = FALSE,
+        )+
+        scale_color_manual("", 
+            values=cur_colors,
+            labels=cur_labels,
+        ) +
+        theme_minimal_grid() + 
+        scale_y_continuous("Autocorrelation between m6A events") + 
+        scale_x_continuous("Lag between m6A events") + 
+        guides(color = guide_legend(override.aes = list(size = 2, shape="") ) )+
+        theme(
+            legend.position = "top",
+            legend.text=element_text(size=9)
+            )
+    my_ggsave("Figures/{sm}-autocorrelation-between-m6A{simple}{revio}.pdf", height=5, width=6)
+}
 ```
 
 
@@ -183,12 +245,15 @@ m6a_by_cov_ratio = m6a_by_cov %>%
 m6a_by_cov_ratio   %>%
     ggplot(aes(
             x=coverage, y=fc,
-            color=ft, fill=ft
+            color=fc,
+            fill=fc
         )
     ) +
     geom_point() + geom_line() +
     geom_text_repel(
-        aes(label=paste(comma(100*fc), "%"))
+        aes(label=paste(comma(100*fc), "%")),
+        nudge_y=0.3,
+        color="black"
         )+
     geom_hline(
         data=NULL,
@@ -203,19 +268,153 @@ m6a_by_cov_ratio   %>%
     ) +
     scale_xsidey_continuous(
         name="# of m6A bases",
-        label=comma
+        label=comma,
     ) +
-    scale_y_continuous("% increase in m6A calls",
+    scale_y_continuous("% increase in # of m6A calls",
         labels = function(x) paste0(100*x, "%")
     ) + 
     scale_x_continuous("CCS coverage",
         breaks = seq(0,15),
         labels = c(seq(0,14), "15+")
     )+
+    scale_fill_gradient(low = "#7712d2", high = "purple", trans="log10") +
+    scale_color_gradient(low = "#7712d2", high = "purple", trans="log10") +
     theme_minimal_grid() + 
     theme(
         legend.position="none",
         ggside.panel.scale = .15,
     )
-my_ggsave("Figures/Increase-in-m6A-calls-by-coverage.pdf", height=6, width=8)
+my_ggsave("Figures/Increase-in-m6A-calls-by-coverage.pdf", height=6, width=10)
+```
+
+
+# runtime 
+```{r}
+rt_df = fread("Tables/run-time-comparison.tsv") %>%
+    filter(type=="CPU")%>%
+    mutate(
+        label=paste(
+            comma(round(ipdSummary/fibertools)),
+            "",
+            #"\n",
+            #"Fibertools CPU hours: ",
+            #fibertools,
+            sep=""
+        )
+    )
+rt_df  %>%
+    ggplot(aes(x=Gbp, y=ipdSummary/fibertools))+
+    geom_point()+
+    geom_line()+
+    geom_text_repel(aes(label=label))+
+    scale_y_continuous(
+        "Fold increase in fibertools m6A calling",
+        label=comma,
+        limits=c(0,NA)
+    )+
+    scale_x_continuous("Gbp of HiFi data")+
+    theme_minimal_grid()
+my_ggsave("Figures/run-time-comparison.tsv", height=6, width=8)
+```  
+
+
+```{r}
+rt_df  %>%
+    pivot_longer(cols=c("ipdSummary", "fibertools")) %>%
+    arrange(-value) %>%
+    mutate(
+        sample=factor(sample, levels=rev(unique(sample)))
+    ) %>%
+    ggplot(aes(x=sample, y=value, color=name))+
+    geom_text_repel(
+        aes(label=comma(value)),
+        color="black", size=3,
+        nudge_y = 50,
+        direction="y",
+    )+
+    geom_point(size=3)+
+    scale_y_continuous(
+        "Runtime for m6A calling\n(CPU hours)",
+        label=comma,
+        limits=c(0,NA)
+    )+
+    scale_x_discrete(
+        "SMRTcell",
+        guide = guide_axis(n.dodge = 2), 
+    )+
+    scale_color_manual(
+        "",
+        values=c(fibertools="purple", "ipdSummary"=MODEL_COLORS["GMM"][[1]]),
+        label=c("fibertools", "ipdSummary pipeline")
+    )+
+    theme_minimal_grid()+
+    guides(color = guide_legend(override.aes = list(size = 3)))+
+    theme(
+        legend.position="top",
+        axis.text.x=element_text(size=9)
+    )
+my_ggsave("Figures/run-time-comparison.pdf", height=5, width=8)
+```
+
+# FPR TPR precision recall figures
+```{r}
+sm="PS00109_1"
+sm="PS00075_1"
+tp_df = fread(glue("Tables/{sm}-ROC-curve-data.csv")) %>% filter(tag!="pb") 
+pr_df = fread(glue("Tables/{sm}-precision-recall.csv")) %>% filter(tag!="pb")
+auc = fread(glue("Tables/{sm}-area-under.csv")) %>% filter(tag!="pb") %>% filter(tag != "semi") 
+tp_df
+pr_df
+```
+
+```{r}
+zs=4
+p1 = tp_df %>%
+    filter(tag != "semi") %>%
+    ggplot(aes(x=FPR, y=TPR, color=tag))+
+    geom_line() +
+    facet_zoom(
+        xy = (FPR < 0.05) & (TPR > 0.5),
+        horizontal = FALSE,
+        zoom.size=zs
+    )+
+    scale_x_continuous("False positive rate")+
+    scale_y_continuous("True positive rate")+
+    scale_color_manual(
+        "Model",
+        values=c("red", "darkgray", "orange"),
+        labels=c("CNN", "ipdSummary", "XGBoost")
+    )+
+    guides(color = guide_legend(override.aes = list(size = 3) ) )+
+    theme_cowplot() +
+    theme(legend.position="left")
+
+library(grid)
+# Create a text
+#grob <- grobTree(textGrob("Scatter plot", x=0.8,  y=0.2, hjust=0,
+#  gp=gpar(col="red", fontsize=13, fontface="italic")))
+#p1=p1+ annotation_custom(grob)
+
+p2 = pr_df %>%
+    filter(tag != "semi") %>%
+    ggplot(aes(x=precision, y=recall, color=tag))+
+    geom_vline(aes(xintercept=0.9), linetype="dashed")+
+    geom_hline(aes(yintercept=0.9), linetype="dashed")+
+    geom_line() +
+    facet_zoom(
+        xy = (precision > 0.5) & (recall > 0.5),
+        horizontal = FALSE,
+        zoom.size=zs
+    )+
+    scale_x_continuous("Precision")+
+    scale_y_continuous("Recall")+
+    scale_color_manual(
+        "Model",
+        values=c("red", "darkgray", "orange"),
+    )+
+    theme_cowplot() +
+    theme(legend.position="none")
+p1+p2
+my_ggsave("Figures/{sm}-roc-and-pr.pdf", height=6, width=14)
+print(auc)
 ```

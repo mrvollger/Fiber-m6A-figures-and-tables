@@ -75,7 +75,7 @@ MODEL_COLORS.update(
         "xgb": Yellow,
         "gmm": Teal,
         "ipd": Gray,
-        "semi": "orange",
+        "semi": "purple",
     }
 )
 
@@ -144,7 +144,8 @@ for sm in samples:
 
     start = 0.5
 
-    tp, fp, ttt, p, r, tt, tags = [], [], [], [], [], [], []
+    auc = []
+    tp, fp, ttt, p, r, tt, tags, tags_2 = [], [], [], [], [], [], [], []
     for tag in ["ipd", "pb", "xgb", "cnn", "semi"]:
         color = MODEL_COLORS[tag]
         # if tag == "semi":
@@ -179,6 +180,14 @@ for sm in samples:
         else:
             tt += t.tolist()
         tags += precision.shape[0] * [tag]
+        tags_2 += tpr.shape[0] * [tag]
+        auc.append(
+            {
+                "tag": tag,
+                "AUC-ROC": metrics.auc(fpr, tpr),
+                "AU-PR": metrics.average_precision_score(merge.truth, merge[tag]),
+            }
+        )
 
     ax1.legend()
     ax2.legend()
@@ -195,12 +204,17 @@ for sm in samples:
     plt.savefig(f"Figures/{sm}-precision-recall.pdf")
 
     # %%
+    print(auc)
+    a = pd.DataFrame.from_dict(auc)
+    print(a)
+    a.to_csv(f"Tables/{sm}-area-under.csv", index=False)
     pr_df = pd.DataFrame({"precision": p, "recall": r, "threshold": tt, "tag": tags})
-    tp_df = pd.DataFrame({"FPR": fp, "TPR": tp, "threshold": ttt})
+    pr_df.to_csv(f"Tables/{sm}-precision-recall.csv", index=False)
+    tp_df = pd.DataFrame({"FPR": fp, "TPR": tp, "threshold": ttt, "tag": tags_2})
+    tp_df.to_csv(f"Tables/{sm}-ROC-curve-data.csv", index=False)
     pr_df["difference"] = (pr_df.precision - pr_df.recall).abs()
     pr_df["difference_from_recall"] = (pr_df.recall - 0.85).abs()
     pr_df["difference_from_precision"] = (pr_df.precision - 0.945).abs()
-
     plt.rcParams["figure.figsize"] = [10, 5]
 
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
