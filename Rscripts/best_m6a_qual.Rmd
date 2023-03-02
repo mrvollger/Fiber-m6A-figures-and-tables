@@ -7,7 +7,7 @@ system("mkdir -p Figures/threshold_choice/")
 ```
 
 ```{r}
-min_ml = 190
+min_ml = 230
 sm="PS00075_1"
 sm="PS00109_1"
 sm="GM12878"
@@ -60,11 +60,12 @@ full_grid_counts
 source('Rscripts/utils.R')
 GMM_count = full_grid_counts[full_grid_counts$tag == "GMM",]$n_pred[1]
 GMM_count/1e6
-max_pred = 1.5*GMM_count
+max_pred = 2.5*GMM_count
 
 p = full_grid %>%
     filter(dist > 40 & dist < 300) %>%
     filter(tag != "GMM") %>%
+    filter(tag == "SEMI") %>%
     filter( (n_pred > GMM_count) & (n_pred < max_pred) ) %>%
     #group_by(tag, threshold) %>%
     #filter(n() > 1e5) %>%
@@ -79,7 +80,7 @@ p = full_grid %>%
     scale_y_continuous("Density") +
     scale_colour_binned(type = "viridis", n.breaks=length(t)) +
     #scale_color_manual("", values=MODEL_COLORS) +
-    facet_wrap(~tag) +
+    #facet_wrap(~tag) +
     coord_cartesian(xlim=c(60,250)) +
     theme_cowplot() +
     theme(

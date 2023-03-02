@@ -1,0 +1,42 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE}
+system("mkdir -p Figures")
+source('Rscripts/utils.R')
+```
+
+```{r}
+fdr.df = fread(
+    cmd= "zcat ../GM12878_aCRE_2022-08-16/results/Phased_GM12878_all/acc.model.results.bed.gz | grep -v '230,230,230' | grep -v '147,112,219' | head -n 10000000"
+)
+fdr.df
+```
+
+
+```{r}
+fdr.df = fread(
+    cmd= "zcat ../GM12878_aCRE_2022-08-16/results/chr20_GM12878_all/acc.model.results.bed.gz | grep -v '230,230,230' | grep -v '147,112,219' | head -n 10000000"
+)
+fdr.df
+```
+
+```{r}
+fdr.df$l = fdr.df$en -fdr.df$st 
+fdr.df[l>500]$l = 500
+fdr.df %>%
+    filter(l > 1) %>%
+    filter(qValue < 0.15) %>%
+    group_by(color) %>%
+    mutate(max_fdr = factor(round(max(qValue),2))) %>%
+    ggplot(aes(x=l, fill=max_fdr)) +
+    geom_histogram(binwidth=5) +
+    geom_vline(aes(xintercept=85), linetype="dashed") +
+    facet_col(~max_fdr, scales="free_y") +
+    theme_minimal_grid()
+ggsave("tmp.pdf", width = 8, height=8)
+```

@@ -1,7 +1,10 @@
+
+set -eo pipefail
+
 ft=fibertools-rs/target/release/ft
 pushd fibertools-rs/
 git pull
-cargo build --release --features cnn
+cargo build --release
 popd
 
 m=1
@@ -57,6 +60,10 @@ $ft -t $(nproc) extract -s -m $m --all - data/$sm.cnn.bam | bgzip -@ $(nproc) > 
 $ft -t $(nproc) predict-m6a -v data/$sm.gmm.bam data/$sm.semi.bam -s -a
 $ft -t $(nproc) extract -s -m $m --all - data/$sm.semi.bam | bgzip -@ $(nproc) > data/$sm.semi.tbl.gz
 
-$ft -t $(nproc) predict-m6a -v data/$sm.gmm.bam data/$sm.xgb.bam -a
+$ft -t $(nproc) predict-m6a -v data/$sm.gmm.bam data/$sm.xgb.bam -a -x
 $ft -t $(nproc) extract -s -m $m --all - data/$sm.xgb.bam | bgzip -@ $(nproc) > data/$sm.xgb.tbl.gz
 
+
+
+$ft -t $(nproc) predict-m6a -v data/$sm.gmm.bam data/$sm.semi.filtered.bam -s
+$ft -t $(nproc) extract -s --all - data/$sm.semi.filtered.bam | bgzip -@ $(nproc) > data/$sm.semi.filtered.tbl.gz

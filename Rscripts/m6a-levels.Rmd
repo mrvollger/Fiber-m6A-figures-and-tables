@@ -1,0 +1,328 @@
+```{r}
+source('Rscripts/utils.R', chdir = TRUE)
+library("purrr")
+library("reticulate")
+```
+
+
+```{r}
+sample_tbl = "PS00227 PS00227-m6A-ML-val-gDNA-bc2001
+PS00228 PS00228-m6A-ML-val-gDNA-40-U-EcoRI-bc2002
+PS00229 PS00229-m6A-ML-val-gDNA-10-U-TaqI-bc2003
+PS00230 PS00230-m6A-ML-val-gDNA-8-U-Dam-bc2004
+PS00231 PS00231-m6A-ML-val-WGA-bc2005
+PS00232 PS00232-m6A-ML-val-WGA-with-1-mM-m6ATP-bc2006
+PS00234 PS00234-m6A-ML-val-WGA-with-160-uM-m6ATP-bc2008
+PS00233 PS00233-m6A-ML-val-WGA-with-400-uM-m6ATP-bc2007
+PS00235 PS00235-m6A-ML-val-WGA-with-64-uM-m6ATP-bc2009
+PS00237 PS00237-m6A-ML-val-WGA-with-10-uM-m6ATP-bc2011
+PS00236 PS00236-m6A-ML-val-WGA-with-25-uM-m6ATP-bc2010
+PS00238 PS00238-m6A-ML-val-WGA-1U-Hia5-30-min-37-C-bc2012
+PS00239 PS00239-m6A-ML-val-WGA-0.1U-Hia5-30-min-37-C-bc2013
+PS00240 PS00240-m6A-ML-val-WGA-0.01U-Hia5-30-min-37-C-bc2014
+PS00241 PS00241-m6A-ML-val-WGA-10-U-TaqI-bc2015
+PS00242 PS00242-m6A-ML-val-WGA-8-U-Dam-bc2016
+PS00243 PS00243-m6A-ML-val-Fiber-seq-bc2017
+PS00244 PS00244-m6A-ML-val-Fiber-seq-M-SssI-bc2018
+PS00245 PS00245-m6A-ML-val-WGA-M-SssI-bc2019"
+sample_tbl = fread(sample_tbl, col.names=c("sm", "sample"))
+```
+
+```{r}
+ms_tbl = "PS00231	-0.0305508
+PS00232	67.944998
+PS00233	52.2725014
+PS00234	33.429858
+PS00235	14.4525662
+PS00236	8.4685369
+PS00237	2.56382084"
+ms_tbl = merge(fread(ms_tbl, col.names=c("sm", "m6a_percent")), sample_tbl, by="sm")
+ms_tbl$type = "Mass spec"
+ms_tbl
+```
+
+
+```{r}
+ft_files = data.table(file=Sys.glob("/mmfs1/gscratch/stergachislab/bohaczuk/scripts/fiberseq-smk/results/P*subML/*tbl.gz"), type="fibertools")
+ft_files = data.table(file=Sys.glob("/mmfs1/gscratch/stergachislab/bohaczuk/scripts/fiberseq-smk/results/P*_ML/*tbl.gz"), type="fibertools")
+ipd_files = data.table(file=Sys.glob("/mmfs1/gscratch/stergachislab/bohaczuk/scripts/fiberseq-smk/results/P*subread/*tbl.gz"), type="ipdSummary")
+files = bind_rows(ft_files, ipd_files) %>% 
+    mutate(
+       sm=str_remove(str_extract(file, "/PS\\d+"), "/")
+    ) %>%
+    merge(sample_tbl, by = "sm")
+files
+```
+
+```{r}
+get_m6a_percent = function(file) {
+    tdf = fread(cmd = glue("hck -F sam_flag -F total_m6a_bp -F total_AT_bp -F ec -z {file}"))
+    tdf  %>% 
+        filter(sam_flag <= 16) %>%
+        #filter(ec >= 8) %>%
+        summarise(m6a=sum(total_m6a_bp), AT=sum(total_AT_bp), n_fibers = n()) %>% 
+        mutate(
+            m6a_percent = 100*m6a/AT
+        )
+}
+
+m6a_per_df = files %>%
+    filter(grepl("m6ATP|PS00231-m6A-ML-val-WGA-bc2005|Fiber-seq", sample)) %>%
+    #head(2) %>%
+    mutate(res = purrr::map(file, get_m6a_percent)) %>% 
+    tidyr::unnest(res) %>%
+    data.table()
+```
+
+```{r}
+cur_colors = MODEL_COLORS[c("GMM","SEMI", "Revio")]
+names(cur_colors) = c("ipdSummary", "fibertools", "Mass spec")
+cur_labels = c(
+    "Subread model",
+    "Semi-supervised CNN",
+    "Mass spec"
+)
+
+bind_rows(m6a_per_df, ms_tbl) %>%
+    mutate(
+        Hia5 = as.numeric(str_match(sample, ".*-([0-9]+)-(mM|uM)-m6ATP.*")[,2])
+    ) %>%
+    mutate(
+        Hia5 = case_when(
+            Hia5 == 1 ~ 1000,
+            is.na(Hia5) ~ 1,
+            TRUE ~ Hia5
+        )
+    ) %>%
+    arrange(m6a_percent) %>%
+    mutate(
+        sm = factor(sm, levels=unique(sm))
+    ) %>%
+    ggplot(aes(y = m6a_percent, x=Hia5, color=type)) +
+    geom_line() +
+    geom_point() +
+    scale_x_continuous("m6ATP (uM)", trans="log10") +
+    scale_y_continuous("m6A percentage") +
+    annotation_logticks(side="b") +
+    scale_color_manual(values=cur_colors, labels=cur_labels) + 
+    theme_minimal_grid() +
+    theme(legend.position="top")
+my_ggsave("Figures/m6a-percent.pdf")
+```
+
+
+# ML calls vs threshold 
+```{r}
+libs = "export LIBTORCH=/mmfs1/gscratch/stergachislab/mvollger/projects/large_home/libs/libtorch-static-with-deps-1.13.0_cu116; export LIBTORCH_CXX11_ABI=0;export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH;export DYLD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH"
+
+#ff = "validation_data/All_ML_PS00231-m6A-ML-val-WGA-bc2005.tbl.gz"
+ff = "validation_data/tmp.tbl.gz"
+WGA_data = "results/PS00092/unaligned.fiberseq.bam"
+WGA_data = "validation_data/PS00231-m6A-ML-val-WGA-bc2005/PS00231_ML.fiberseq.bam"
+cmd = glue("{libs} && samtools view -@ 16 -u -F 2304 -s 0.01 {WGA_data} | ft predict -t 20 -a -m 0 | ft extract -t 8 --all - | bgzip -@ 8 > {ff}")
+print(cmd)
+system(cmd)
+```
+
+```{r}
+m6a_vs_ml_tbl = read_m6a(
+    ff,
+    ref=F,
+    min_ml=200
+) 
+AT_bp = fread(glue("hck -z  -F sam_flag -F fiber -F total_AT_bp {ff}")) %>%
+    filter(sam_flag <= 16)
+dim(AT_bp)
+```
+
+```{r}
+t=seq(200,255)
+max_fpr = 20
+m6a_vs_ml_tbl %>% 
+    select(m6a_qual, start, en, st, fiber, tag, type) %>%
+    head(n=1e6) %>%
+    merge(AT_bp, by="fiber") %>%
+    expand_grid(threshold=t)  %>%
+    filter(m6a_qual >= threshold | is.na(m6a_qual)) %>%
+    group_by(threshold) %>%
+    summarise(
+        m6a = sum(type=="m6A"),
+        AT_bp = sum(unique(total_AT_bp))
+    ) %>%
+    mutate(
+        m6a_frac = 100*m6a/AT_bp,
+        ML_FPR = 100*(1.0 - threshold/255),  
+    ) %>%
+    filter(ML_FPR <= max_fpr) %>%
+    #filter(type=="m6A") %>%
+    ggplot(aes(y= m6a_frac, x=ML_FPR)) +
+    geom_line() +
+    geom_point() +
+    #geom_abline(slope=1, intercept=0, color="darkred", linetype="dashed") +
+    scale_x_continuous("Model predicted FPR (%)", 
+        #limits=c(0, max_fpr)
+    ) +
+    scale_y_continuous("Percent m6A in WGA data",
+        #limits=c(0, max_fpr)
+    ) + 
+    #coord_fixed() +
+    theme_minimal_grid()
+
+my_ggsave("Figures/WGA-by-ML-tag.pdf")
+```
+
+
+# load npz files
+```{r}
+load_ipd_from_npz = function(file){
+    np <- import("numpy")
+    #npz <- np$load("tmp.npz")
+    #npz <- np$load("ml_data/PS00075_2.val.npz")
+    print(file)
+    npz = np$load(file)
+    fibers = npz["fibers"]
+    labels = npz["labels"]
+    n_rows = min(5e6, length(labels))
+    print(n_rows)
+    f = npz["features"]
+    print("done reading features")
+    ipd = f[,5,]
+    raw_data = data.table(ipd)
+    raw_data$label = labels
+    raw_data$fiber = fibers
+    raw_data %>% 
+        pivot_longer(
+            colnames(raw_data)[1:15]
+        ) %>%
+        mutate(
+            name = factor(name, levels =paste0("V", seq(15)))
+        )
+}
+ipd_2.0 = load_ipd_from_npz("npz_r_data/2.0.npz")
+ipd_2.2 = load_ipd_from_npz("npz_r_data/2.2.npz")
+ipd_3.2 = load_ipd_from_npz("npz_r_data/3.2_fiberseq.npz")
+ipd_3.2_2 = load_ipd_from_npz("npz_r_data/3.2_AoU.npz")
+ipd_3.2_3 = load_ipd_from_npz("npz_r_data/3.2_m6ATP.npz")
+long_ipd = bind_rows(
+    list(
+        ipd_2.0=ipd_2.0,
+        ipd_2.2=ipd_2.2,
+        ipd_3.2=ipd_3.2,
+        ipd_3.2_2=ipd_3.2_2,
+        ipd_3.2_3=ipd_3.2_3
+    ),
+    .id = "chem"
+)
+
+filter_long_ipd = long_ipd %>%
+    filter(name == "V8") %>%
+    group_by(chem) %>%
+    mutate(idx = seq(n())) %>%
+    filter(idx < 10e5) 
+dim(filter_long_ipd)
+```
+
+```{r}
+filter_long_ipd %>%
+    ggplot(aes(x=name, fill=label, y=255*value)) +
+    geom_violin() +
+    geom_text_repel(
+        data = . %>% 
+            group_by(chem, label, name) %>%
+            summarise(
+                my_mean = round(mean(255*value)),
+                my_median = round(median(255*value)),
+            ),
+        aes(y=my_mean, label = my_mean),
+        min.segment.length=0
+    ) +
+    facet_row(~chem) + 
+    scale_y_continuous("IPD value") +
+    xlab("PacBio chemistry") +
+    scale_fill_discrete("ipdSummary m6A label") + 
+    theme_minimal_grid() +  
+    theme(
+        legend.position="top"
+    )
+my_ggsave("Figures/ipd_values.pdf", width = 12)
+```
+
+
+
+```{r}
+filter_long_ipd %>%
+    group_by(chem, label, fiber, name) %>%
+    summarise(
+        value=mean(value),
+        m6a_count = n()
+    ) %>%
+    filter(m6a_count > 100) %>%
+    ggplot(aes(x=name, fill=label, y=255*value)) +
+    geom_violin(scale="width", width=0.75) +
+    geom_label_repel(
+        data = . %>% 
+            group_by(chem, label, name) %>%
+            summarise(
+                my_mean = round(mean(255*value)),
+                my_median = round(median(255*value)),
+                fiber_count = length(unique(fiber)),
+            ),
+        aes(fill=NULL, y=my_mean, label = paste(my_median, "\nn =", comma(fiber_count))),
+        alpha=0.75,
+        min.segment.length=0,
+        nudge_x=-2,
+        nudge_y=20,
+    ) +
+    facet_row(~chem) + 
+    scale_y_continuous("IPD value") +
+    xlab("PacBio chemistry") +
+    scale_fill_discrete("ipdSummary m6A label") + 
+    theme_minimal_grid() +  
+    theme(
+        legend.position="top"
+    )
+my_ggsave("Figures/ipd_values_by_reads.pdf", width = 12)
+```
+
+
+
+```{r}
+keep = filter_long_ipd %>%
+    group_by(chem) %>%
+    summarise(fiber = unique(fiber)) %>%
+    mutate(index = seq(n())) %>%
+    filter(index <= 200)
+
+filter_long_ipd %>%
+    filter(fiber %in% keep$fiber) %>%
+    filter(chem %in% c("ipd_2.0", "ipd_2.2", "ipd_3.2")) %>%
+    group_by(chem, fiber, name) %>% 
+    mutate(
+        average=mean(value[label == TRUE]),
+        m6a_count = sum(label==TRUE),
+        m6a_frac = sum(label==TRUE)/n(),
+    ) %>%
+    ungroup() %>%
+    #arrange(average) %>%
+    arrange(m6a_count) %>%
+    #arrange(m6a_frac) %>%
+    mutate(
+        fiber = factor(fiber, levels=unique(fiber)),
+        #my_color = factor(label, levels=c(F,T)),
+    ) %>%
+    arrange(label) %>%
+    ggplot(aes(x=fiber, fill=label, color=label, y=255*value)) +
+    geom_point(aes(shape=label, alpha=(label+0.25) )) +
+    geom_ysidedensity(position = "fill", adjust=0.2)+
+    geom_xsidehistogram(position = "fill", stat="count", binwidth=1)+
+    facet_col(~chem, scales = 'free') + 
+    scale_y_continuous("IPD value") +
+    scale_alpha_continuous(limits=c(0,1))+
+    xlab("PacBio chemistry") +
+    scale_fill_discrete("ipdSummary m6A label") + 
+    theme_minimal_grid() +  
+    theme(
+        legend.position="top"
+    )
+my_ggsave("Figures/ipd_values_per_read.pdf", width = 20, height=16)
+```
