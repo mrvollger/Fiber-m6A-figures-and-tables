@@ -199,20 +199,26 @@ load_ipd_from_npz = function(file){
         )
 }
 ipd_2.0 = load_ipd_from_npz("npz_r_data/2.0.npz")
+ft_2.0 = load_ipd_from_npz("npz_r_data/ft_2.0.npz")
 ipd_2.2 = load_ipd_from_npz("npz_r_data/2.2.npz")
 ft_2.2 = load_ipd_from_npz("npz_r_data/ft_2.2.npz")
 ipd_3.2 = load_ipd_from_npz("npz_r_data/3.2_fiberseq.npz")
-ipd_3.2_2 = load_ipd_from_npz("npz_r_data/3.2_AoU.npz")
-ipd_3.2_3 = load_ipd_from_npz("npz_r_data/3.2_m6ATP.npz")
+ft_3.2 = load_ipd_from_npz("npz_r_data/ft_3.2.npz")
 ft_Revio = load_ipd_from_npz("npz_r_data/Revio.npz")
+#ipd_large_2.2 = load_ipd_from_npz("results/PS00109_2/ml/PS00109_2.npz")
+#ipd_3.2_2 = load_ipd_from_npz("npz_r_data/3.2_AoU.npz")
+#ipd_3.2_3 = load_ipd_from_npz("npz_r_data/3.2_m6ATP.npz")
 long_ipd = bind_rows(
     list(
         ipd_2.0=ipd_2.0,
+        ft_2.0=ft_2.0,
         ipd_2.2=ipd_2.2,
         ft_2.2=ft_2.2,
         ipd_3.2=ipd_3.2,
-        ipd_3.2_2=ipd_3.2_2,
-        ipd_3.2_3=ipd_3.2_3,
+        ft_3.2=ft_3.2,
+        #ipd_3.2_AoU=ipd_3.2_2,
+        #ipd_3.2_m6ATP=ipd_3.2_3, # not a good one because dont have nucs to subset from
+        #ipd_large_2.2=ipd_large_2.2,
         ft_Revio=ft_Revio
     ),
     .id = "chem"
@@ -239,7 +245,9 @@ filter_long_ipd %>%
                 my_median = round(median(255*value)),
             ),
         aes(y=my_mean, label = my_mean),
-        min.segment.length=0
+        min.segment.length=0,
+        nudge_y=15,
+        nudge_x=-0.2,
     ) +
     facet_row(~chem) + 
     scale_y_continuous("IPD value") +
@@ -300,7 +308,7 @@ keep = filter_long_ipd %>%
 
 filter_long_ipd %>%
     filter(fiber %in% keep$fiber) %>%
-    filter(chem %in% c("ipd_2.0", "ipd_2.2", "ft_2.2", "ipd_3.2", "ft_Revio")) %>%
+    #filter(chem %in% c("ipd_2.0", "ipd_2.2", "ft_2.2", "ipd_3.2", "ft_Revio")) %>%
     group_by(chem, fiber, name) %>% 
     mutate(
         average=mean(value[label == TRUE]),
@@ -331,5 +339,5 @@ filter_long_ipd %>%
         legend.position="top"
     )
 s=0.75
-my_ggsave("Figures/ipd_values_per_read.pdf", width = 20*s, height=16*s)
+my_ggsave("Figures/ipd_values_per_read.pdf", width = 20*s, height=20*s)
 ```

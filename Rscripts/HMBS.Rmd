@@ -20,7 +20,7 @@ files
 dfs = list()
 dfs2 = list()
 for (file in files) {
-    cmd = glue('ft center -d 500 {file} temp.bed')
+    cmd = glue('ft center -r -d 500 {file} temp.bed')
     dfs[[file]]=fread(cmd=cmd)
     cmd = glue("samtools view -u -M -L temp.bed {file} | ft extract -s --all -")
     dfs2[[file]]=fread(cmd=cmd)
@@ -103,5 +103,5 @@ combo %>%
     )
 
 s=1.2
-my_ggsave("Figures/HMBS.pdf", width=s*12, height=s*6)
+my_ggsave("Figures/HMBS_reference.pdf", width=s*12, height=s*6)
 ```
