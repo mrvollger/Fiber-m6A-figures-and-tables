@@ -155,7 +155,7 @@ get_maxima_from_plot = function(p, n_keep=3 ){
 my_ggsave <- function(file, ...){
     file = glue(file)
     print(file)
-    ggsave("tmp.pdf", ...)
+    ggsave("tmp.pdf", bg='transparent', ...)
     cmd = glue("cp tmp.pdf {file}")
     print(cmd)
     system(cmd)

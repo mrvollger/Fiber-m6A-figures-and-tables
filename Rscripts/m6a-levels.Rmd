@@ -200,21 +200,26 @@ load_ipd_from_npz = function(file){
 }
 ipd_2.0 = load_ipd_from_npz("npz_r_data/2.0.npz")
 ipd_2.2 = load_ipd_from_npz("npz_r_data/2.2.npz")
+ft_2.2 = load_ipd_from_npz("npz_r_data/ft_2.2.npz")
 ipd_3.2 = load_ipd_from_npz("npz_r_data/3.2_fiberseq.npz")
 ipd_3.2_2 = load_ipd_from_npz("npz_r_data/3.2_AoU.npz")
 ipd_3.2_3 = load_ipd_from_npz("npz_r_data/3.2_m6ATP.npz")
+ft_Revio = load_ipd_from_npz("npz_r_data/Revio.npz")
 long_ipd = bind_rows(
     list(
         ipd_2.0=ipd_2.0,
         ipd_2.2=ipd_2.2,
+        ft_2.2=ft_2.2,
         ipd_3.2=ipd_3.2,
         ipd_3.2_2=ipd_3.2_2,
-        ipd_3.2_3=ipd_3.2_3
+        ipd_3.2_3=ipd_3.2_3,
+        ft_Revio=ft_Revio
     ),
     .id = "chem"
 )
 
 filter_long_ipd = long_ipd %>%
+    mutate(chem = factor(chem, levels=unique(chem))) %>%
     filter(name == "V8") %>%
     group_by(chem) %>%
     mutate(idx = seq(n())) %>%
@@ -256,7 +261,7 @@ filter_long_ipd %>%
         value=mean(value),
         m6a_count = n()
     ) %>%
-    filter(m6a_count > 100) %>%
+    #filter(m6a_count > 100) %>%
     ggplot(aes(x=name, fill=label, y=255*value)) +
     geom_violin(scale="width", width=0.75) +
     geom_label_repel(
@@ -295,7 +300,7 @@ keep = filter_long_ipd %>%
 
 filter_long_ipd %>%
     filter(fiber %in% keep$fiber) %>%
-    filter(chem %in% c("ipd_2.0", "ipd_2.2", "ipd_3.2")) %>%
+    filter(chem %in% c("ipd_2.0", "ipd_2.2", "ft_2.2", "ipd_3.2", "ft_Revio")) %>%
     group_by(chem, fiber, name) %>% 
     mutate(
         average=mean(value[label == TRUE]),
@@ -313,10 +318,11 @@ filter_long_ipd %>%
     arrange(label) %>%
     ggplot(aes(x=fiber, fill=label, color=label, y=255*value)) +
     geom_point(aes(shape=label, alpha=(label+0.25) )) +
-    geom_ysidedensity(position = "fill", adjust=0.2)+
+    geom_ysidedensity(position = "fill", adjust=0.5)+
     geom_xsidehistogram(position = "fill", stat="count", binwidth=1)+
     facet_col(~chem, scales = 'free') + 
     scale_y_continuous("IPD value") +
+    scale_x_discrete("Fiber-seq reads", label=rep("",1000))+
     scale_alpha_continuous(limits=c(0,1))+
     xlab("PacBio chemistry") +
     scale_fill_discrete("ipdSummary m6A label") + 
@@ -324,5 +330,6 @@ filter_long_ipd %>%
     theme(
         legend.position="top"
     )
-my_ggsave("Figures/ipd_values_per_read.pdf", width = 20, height=16)
+s=0.75
+my_ggsave("Figures/ipd_values_per_read.pdf", width = 20*s, height=16*s)
 ```

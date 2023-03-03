@@ -1,0 +1,107 @@
+```{r}
+source('Rscripts/utils.R')
+library("purrr")
+library("reticulate")
+```
+
+
+```{r}
+start = 119084601 
+end = 119085100
+mid = round((start+end)/2)
+region = glue("chr11\t{mid}\t{mid+1}")
+fileConn<-file("temp.bed")
+writeLines(c(region), fileConn)
+close(fileConn)
+
+files = Sys.glob("../fiberseq-smk/results/ft_PS00075*/ft_PS00075*.fiberseq.bam")
+files = c(files, Sys.glob("results/PS00075_*/PS00075_?.fiberseq.bam"))
+files
+dfs = list()
+dfs2 = list()
+for (file in files) {
+    cmd = glue('ft center -d 500 {file} temp.bed')
+    dfs[[file]]=fread(cmd=cmd)
+    cmd = glue("samtools view -u -M -L temp.bed {file} | ft extract -s --all -")
+    dfs2[[file]]=fread(cmd=cmd)
+}
+```
+
+
+```{r}
+fiber_tbl = bind_rows(dfs2) %>%
+    group_by(fiber, ec) %>%
+    summarise(
+        query_name = unique(fiber)
+    )
+
+combo = bind_rows(dfs, .id="tool") %>% 
+    filter(centered_position_type=="m6a") %>%
+    mutate(
+        is_ft = grepl("ft_", tool),
+        centered_start = centered_start + mid,
+    ) %>%
+    group_by(query_name, centered_start, reference_start, reference_end ) %>%
+    summarise(
+        case = case_when(
+            n() == 2 ~ "both",
+            n() > 2 ~ "weird",
+            is_ft ~ "fibertools",
+            TRUE ~ "subread"
+        )
+    ) %>%
+    ungroup() %>%
+    group_by(query_name, reference_start, reference_end) %>%
+    filter(centered_start >= start & centered_start <= end) %>%
+    filter(reference_start <= start & reference_end >= end) %>%
+    filter(n()> 10) %>%
+    merge(fiber_tbl, by="query_name") %>%
+    mutate(frac_new = sum(case=="fibertools")/n()) %>%
+    ungroup() %>%
+    arrange(-ec) %>%
+    mutate(
+        case=factor(case),
+        query_name=factor(query_name, levels=unique(query_name)),
+        y = as.numeric(query_name)
+    ) %>%
+    data.table()
+combo
+```
+
+
+```{r}
+combo %>%
+    ggplot(
+        aes(x=centered_start, color=NULL, fill=case)
+    )+
+    #geom_point(alpha=0.5)+
+    #geom_hline(aes(yintercept=y), size = 0.1) +
+    geom_rect(
+        aes(ymin=y-0.45, ymax=y+0.45, xmin=centered_start, xmax=centered_start+0.9),
+        size=-0
+    ) +
+    geom_xsidedensity(aes(x=centered_start), adjust=0.15, fill="darkgray") +
+    #scale_xsidey_continuous(name="m6A density") +
+    geom_ysidehistogram(aes(y=y), position="fill") +
+    scale_ysidex_continuous(breaks=c(0.25, 0.75)) +
+    scale_y_continuous(
+        "Fiber-seq reads",
+        breaks = seq(max(combo$y)),
+        labels = rep("", max(combo$y)),
+    ) +
+    scale_x_continuous("Genomic position", label=comma) +
+    #scale_color_manual(
+    #    values = c(subread="green", both="darkgray", fibertools="purple")
+    #) +
+    scale_fill_manual("",
+        values = c(subread=Teal, both="gray", fibertools="purple")
+    ) +
+    #facet_col(~is_ft) +
+    theme_minimal_hgrid() +
+    theme(
+        legend.position="top"
+    )
+
+s=1.2
+my_ggsave("Figures/HMBS.pdf", width=s*12, height=s*6)
+```
