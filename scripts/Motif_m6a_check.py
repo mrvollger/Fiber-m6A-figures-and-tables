@@ -61,9 +61,12 @@ def get_stats(row, buffer=0, motifs=None):
 
     if row.m6a is None:
         m6a = np.array([], dtype=int)
+        m6a_qual = np.array([], dtype=int)
         # return None
     else:
         m6a = np.array(row.m6a)
+        m6a_qual = np.array(row.m5a_qual)
+
     is_at = (seq == b"A") | (seq == b"T")
     # set motif values not AT to zero
     mask[~is_at] = 0

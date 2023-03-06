@@ -14,9 +14,19 @@ fileConn<-file("temp.bed")
 writeLines(c(region), fileConn)
 close(fileConn)
 
+files = Sys.glob("results/ft_PS00109_*/ft_PS00109_?.fiberseq.bam")
+files = c(files, Sys.glob("results/PS00109_*/PS00109_?.fiberseq.bam"))
+
+files = c(
+    "validation_data/PS00243-m6A-ML-val-Fiber-seq-bc2017/PS00243_ML.fiberseq.bam",
+    "../fiberseq-smk/results/PS00243_subread/PS00243_subread.fiberseq.bam"
+)
+
 files = Sys.glob("../fiberseq-smk/results/ft_PS00075*/ft_PS00075*.fiberseq.bam")
 files = c(files, Sys.glob("results/PS00075_*/PS00075_?.fiberseq.bam"))
+
 files
+
 dfs = list()
 dfs2 = list()
 for (file in files) {
@@ -38,7 +48,7 @@ fiber_tbl = bind_rows(dfs2) %>%
 combo = bind_rows(dfs, .id="tool") %>% 
     filter(centered_position_type=="m6a") %>%
     mutate(
-        is_ft = grepl("ft_", tool),
+        is_ft = grepl("ft_", tool) | grepl("_ML", tool),
         centered_start = centered_start + mid,
     ) %>%
     group_by(query_name, centered_start, reference_start, reference_end ) %>%

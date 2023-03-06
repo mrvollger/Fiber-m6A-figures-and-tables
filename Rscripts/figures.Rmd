@@ -28,6 +28,7 @@ gmm = read_m6a("data/{sm}.gmm.tbl.gz", my_tag="GMM", ref=F)
 cnn = read_m6a("data/{sm}.cnn.tbl.gz", my_tag="CNN", ref=F, min_ml = 215)
 xgb = read_m6a("data/{sm}.xgb.tbl.gz", my_tag="XGB", min_ml = 245, ref=F)
 semi = read_m6a("data/{sm}.semi.tbl.gz", my_tag="SEMI", min_ml=244, ref=F)
+#semi = read_m6a("validation_data/PS00243-m6A-ML-val-Fiber-seq-bc2017/PS00243_ML.fiberseq.all.tbl.gz", ref=F, my_tag="SEMI")
 if(sm == "PS00109_1"){
     all_revio=NULL
 } else{

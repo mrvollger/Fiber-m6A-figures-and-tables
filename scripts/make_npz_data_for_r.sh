@@ -12,7 +12,7 @@ results/PS00075_1/PS00075_1.fiberseq.bam,2.0.npz
 results/PS00109_2/PS00109_2.fiberseq.bam,2.2.npz
 results/ft_PS00109_1/ft_PS00109_1.fiberseq.bam,ft_2.2.npz
 ../fiberseq-smk/results/PS00243_subread/PS00243_subread.fiberseq.bam,3.2_fiberseq.npz
-validation_data/PS00234-m6A-ML-val-WGA-with-160-uM-m6ATP-bc2008/PS00234_ML.fiberseq.bam,ft_3.2.npz
+validation_data/PS00243-m6A-ML-val-Fiber-seq-bc2017/PS00243_ML.fiberseq.bam,ft_3.2.npz
 EOM
 touch a.txt 
 cat temp.tbl | parallel --colsep ',' -k '/mmfs1/gscratch/stergachislab/mvollger/projects/large_home/software/samtools-1.17/samtools reset -O BAM -@8 {1}  | m6adata --hifi - a.txt --threads 16 --train --min-read-length 100 --min-nuc-length 0 --max-nuc-length 100000 -s 0.01 -n 10000 -o npz_r_data/{2}'

@@ -229,7 +229,7 @@ filter_long_ipd = long_ipd %>%
     filter(name == "V8") %>%
     group_by(chem) %>%
     mutate(idx = seq(n())) %>%
-    filter(idx < 10e5) 
+    filter(idx < 1e6) 
 dim(filter_long_ipd)
 ```
 
@@ -340,4 +340,23 @@ filter_long_ipd %>%
     )
 s=0.75
 my_ggsave("Figures/ipd_values_per_read.pdf", width = 20*s, height=20*s)
+```
+
+
+
+
+```{r}
+f = fread("validation_data/PS00243-m6A-ML-val-Fiber-seq-bc2017/PS00243_ML.fiberseq.all.tbl.gz")
+i = fread("../fiberseq-smk/results/PS00243_subread/PS00243_subread.fiberseq.all.tbl.gz")
+fi=bind_rows(list(f=f,i=i), .id="t")
+
+fi %>% 
+    filter(sam_flag <= 16) %>%
+    group_by(t) %>%
+    #filter(ec < 9) %>%
+    summarise(
+        100*sum(total_m6a_bp)/sum(total_AT_bp),
+        100*median(total_m6a_bp/total_AT_bp),
+        n()
+    )
 ```
