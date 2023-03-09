@@ -1,0 +1,59 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE}
+source('Rscripts/utils.R')
+target_ml_value = 244
+```
+
+```{r}
+motif_df = fread("Tables/Motif-on-target-table-2023-03-06.tsv") %>%
+    group_by(file, motifs) %>% 
+    mutate(ave_motif_cov = mean(`motifs-covered-by-m6A`[min_ml==target_ml_value])) %>%
+    filter(ave_motif_cov > 0.05)
+motif_df
+```
+
+```{r}
+motif_df %>% 
+    filter(motifs != "All-AT-bp") %>%
+    filter(motifs != "GAATTC;GATC;TCGA") %>%
+    filter(min_ml != 0) %>%
+    pivot_longer(
+        cols=c("motifs-covered-by-m6A", "m6A-within-motifs")
+    ) %>%
+    ggplot(
+        aes(x=min_ml, y=value, color=name)
+    ) + 
+    geom_line() +
+    geom_point(
+        data = . %>% filter(min_ml == target_ml_value)
+    ) +
+    scale_color_manual(
+        "",
+        values=c("black", "red"),
+        labels=c("Percent of m6A events within motif", "Percent of motifs covered by m6A")
+    ) +
+    geom_label_repel(
+        data = . %>% filter(min_ml == target_ml_value),
+        aes(label = percent(value, accuracy=0.01), x= min_ml, y=value, nudge_x = -10),
+        nudge_y = 0.2,
+        #nudge_x = 10,
+        min.segment.length = 0,
+    ) +
+    facet_wrap(motifs~file) +
+    scale_y_continuous(
+        "",
+        #"Percentage of target motifs with m6A",
+        labels = scales::percent
+    ) +
+    scale_x_continuous("Model prediction threshold") +
+    theme_minimal_grid()+
+    theme(legend.position="top") 
+    
+my_ggsave("Figures/motifs.pdf", width=9)
+```

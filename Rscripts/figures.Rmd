@@ -18,6 +18,8 @@ xgb = read_m6a("data/{sm}.xgb.tbl.gz", my_tag="XGB", min_ml = 250, ref=F)
 semi = read_m6a("data/{sm}.semi.tbl.gz", my_tag="SEMI", min_ml=230, ref=F)
 #pb = read_m6a("from_pb/{sm}.fiberseq.strip_meth_tags.gamma_v4_cov1.bam.tbl.gz", my_tag="PacBio", min_ml = 250, nrows=8084, ref=F)
 pb=NULL
+revio=NULL
+all_revio=NULL
 ```
 
 ```{r}
@@ -42,18 +44,18 @@ revio = all_revio %>% filter(type=="m6A") %>% filter(m6a_qual >= 251); dim(revio
 ```
 
 ```{r}
-simple=""
 simple="-simple"
+simple=""
 ```
 
 ```{r}
 if(simple==""){
     cur_colors = MODEL_COLORS[c("GMM","CNN", "SEMI", "XGB", "Revio")]
     cur_labels = c(
+        "Subread model",
         "CNN",
         "Semi-supervised CNN",
         "XGB",
-        "Subread model",
         "Revio (Semi-supervised CNN)"
     )
     dists_df = rbindlist(list(cnn, xgb, gmm, semi, revio)) 
@@ -66,6 +68,11 @@ if(simple==""){
     )
     dists_df = rbindlist(list(gmm, semi, revio)) 
 }
+if(is.null(revio)){
+    cur_colors = head(cur_colors, -1)
+    cur_labels = head(cur_labels, -1)
+}
+
 dists_df[
     order(start),
     c("dist", "count_per_fiber"):= list(start - lag(start), .N),
@@ -91,6 +98,9 @@ for(with_revio in c(FALSE,TRUE)){
     tdf = dists_df
     if(with_revio){
         rrevio="-revio"
+        if(is.null(revio)){
+            next
+        }
     }else{
         tdf = dists_df %>% filter(tag != "Revio")
     }

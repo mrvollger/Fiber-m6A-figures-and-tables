@@ -75,7 +75,26 @@ m6a_per_df = files %>%
 ```
 
 ```{r}
-cur_colors = MODEL_COLORS[c("GMM","SEMI", "Revio")]
+m6atp.ft = fread("validation_data/m6ATP.ft.tbl.gz")
+new_data = m6atp.ft %>%
+    group_by(RG) %>%
+    summarise(
+        m6a_percent = sum(total_m6a_bp)/sum(total_AT_bp) * 100,
+        n_fibers = n(),
+        m6a = sum(total_m6a_bp),
+        AT = sum(total_AT_bp),
+    ) %>%
+    mutate(
+        sm = str_remove(RG,"_ML.fiberseq"),
+        type="fibertools",
+    ) %>% 
+    merge(sample_tbl, by="sm")
+bind_rows(m6a_per_df, new_data)
+```
+
+
+```{r}
+cur_colors = MODEL_COLORS[c("GMM","SEMI", "IPD")]
 names(cur_colors) = c("ipdSummary", "fibertools", "Mass spec")
 cur_labels = c(
     "Subread model",
@@ -83,7 +102,10 @@ cur_labels = c(
     "Mass spec"
 )
 
-bind_rows(m6a_per_df, ms_tbl) %>%
+bind_rows(m6a_per_df, ms_tbl, new_data) %>%
+    filter(sm != "PS00243" & sm != "PS00244") %>%
+    filter(grepl("with", sample)) %>%
+    filter(!(type=="fibertools" & !is.na(file) )) %>%
     mutate(
         Hia5 = as.numeric(str_match(sample, ".*-([0-9]+)-(mM|uM)-m6ATP.*")[,2])
     ) %>%
@@ -99,15 +121,26 @@ bind_rows(m6a_per_df, ms_tbl) %>%
         sm = factor(sm, levels=unique(sm))
     ) %>%
     ggplot(aes(y = m6a_percent, x=Hia5, color=type)) +
-    geom_line() +
-    geom_point() +
-    scale_x_continuous("m6ATP (uM)", trans="log10") +
-    scale_y_continuous("m6A percentage") +
-    annotation_logticks(side="b") +
-    scale_color_manual(values=cur_colors, labels=cur_labels) + 
+    geom_line(size=.5) +
+    geom_point(size=3, alpha=0.75) +
+    geom_text_repel(
+        aes(label = round(m6a_percent,2)),
+        min.segment.length=0,
+        #nudge_x = 1,
+        force=15,
+    )+
+    scale_x_continuous("WGA m6ATP concentration (uM)",
+        trans="log10", #scales::pseudo_log_trans(),
+        #breaks = c(1,10,100,1000),
+        #labels = c("0", "10", "100", "1,000"),
+        #minor_breaks = seq(1, 10, 1),
+    ) +
+    scale_y_continuous("Predicted percent m6A", trans="log10") +
+    annotation_logticks(side="lb") +
+    scale_color_manual("", values=cur_colors, labels=cur_labels) + 
     theme_minimal_grid() +
     theme(legend.position="top")
-my_ggsave("Figures/m6a-percent.pdf")
+my_ggsave("Figures/m6a-percent.pdf", height=5, width=6)
 ```
 
 
@@ -360,3 +393,5 @@ fi %>%
         n()
     )
 ```
+
+
