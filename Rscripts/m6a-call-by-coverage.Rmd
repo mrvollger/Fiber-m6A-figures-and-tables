@@ -1,6 +1,9 @@
 # m6A calls by coverage
 ```{r}
 source("Rscripts/utils.R")
+library(ggnewscale)
+library(patchwork)
+
 gmm_cov = fread("data/PS00075_1.gmm.tbl.gz") 
 ft_cov = fread("data/PS00075_1.semi.filtered.tbl.gz") 
 
@@ -24,53 +27,73 @@ m6a_by_cov_ratio = m6a_by_cov %>%
     mutate(
         fc = ft/gmm
     )
+```
 
-m6a_by_cov_ratio   %>%
+```{r}
+my_id = function() trans_new("my_id", function(x) x, function(x) x)
+min_x = 4
+bot = m6a_by_cov_ratio   %>%
     ggplot(aes(
-            x=coverage, y=fc,
+            x=coverage, y=100*fc,
             color=fc,
             fill=fc
         )
     ) +
     geom_point() + geom_line() +
     geom_text_repel(
-        aes(label=paste(comma(100*fc), "%")),
+        aes(label=paste0(comma(100*fc), "%")),
         nudge_y=0.3,
+        nudge_x=1,
         color="black"
         )+
     geom_hline(
         data=NULL,
-        aes(yintercept=1),
+        aes(yintercept=100),
         linetype="dashed", color="darkred"
     ) +
-    geom_xsidehistogram(
-        aes(y=AT_bp),
-        stat="identity",
-        binwidth=1,
-        width = .6,
-    ) +
-     scale_xsidey_continuous(
-        name="# of m6A bases",
-        trans = "identity",
-        label=comma,
-    ) +
     scale_y_continuous(
-        "Fold increase in # of m6A calls",
+        "Percent increase in # of m6A calls",
         #labels = function(x) paste0(100*x, "%"),
-        trans="log10"
+        trans="log10",
+        label=comma
     ) + 
     annotation_logticks(side="l")+
     scale_x_continuous("CCS coverage",
-        breaks = seq(0,15),
-        labels = c(seq(0,14), "15+")
+        breaks = seq(min_x,15),
+        labels = c(seq(min_x,14), "15+")
     )+
     scale_fill_gradient(low = "#7712d2", high = "purple", trans="log10") +
     scale_color_gradient(low = "#7712d2", high = "purple", trans="log10") +
     theme_minimal_grid() + 
     theme(
         legend.position="none",
-        ggside.panel.scale = .15,
+        #ggside.panel.scale = .15,
     )
-my_ggsave("Figures/Increase-in-m6A-calls-by-coverage.pdf", height=6, width=10)
+
+top = m6a_by_cov_ratio   %>%
+    ggplot(aes(
+            x=factor(coverage), y=ft,
+            color=fc,
+            fill=fc
+        )
+    ) +
+    geom_bar(stat="identity") +
+    scale_y_continuous("# m6A bp", label=comma) +
+    scale_fill_gradient(low = "#7712d2", high = "purple", trans="log10") +
+    scale_color_gradient(low = "#7712d2", high = "purple", trans="log10") +
+    theme_minimal_grid() + 
+    theme(
+        legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()
+    ) 
+
+bot_dim = get_dim(bot)
+set_dim(top, bot_dim)
+
+top + bot + plot_layout(ncol = 1, height = c(1, 5))
+
+my_ggsave("Figures/Increase-in-m6A-calls-by-coverage.pdf", height=5, width=8)
 ```
 

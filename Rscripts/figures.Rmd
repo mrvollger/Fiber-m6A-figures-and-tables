@@ -20,6 +20,7 @@ semi = read_m6a("data/{sm}.semi.tbl.gz", my_tag="SEMI", min_ml=230, ref=F)
 pb=NULL
 revio=NULL
 all_revio=NULL
+chem = "2.0"
 ```
 
 ```{r}
@@ -37,6 +38,7 @@ if(sm == "PS00109_1"){
     all_revio = read_m6a("data/Revio.semi.tbl.gz", my_tag="Revio", ref=F, min_ml=230)
 }
 pb = NULL
+chem="2.2"
 ```
 
 ```{r}
@@ -44,27 +46,27 @@ revio = all_revio %>% filter(type=="m6A") %>% filter(m6a_qual >= 251); dim(revio
 ```
 
 ```{r}
-simple="-simple"
 simple=""
+simple="-simple"
 ```
 
 ```{r}
 if(simple==""){
     cur_colors = MODEL_COLORS[c("GMM","CNN", "SEMI", "XGB", "Revio")]
     cur_labels = c(
-        "Subread model",
-        "CNN",
-        "Semi-supervised CNN",
-        "XGB",
-        "Revio (Semi-supervised CNN)"
+        glue("Subread model ({chem})"),
+        glue("CNN ({chem})"),
+        glue("Semi-supervised CNN ({chem})"),
+        glue("XGB ({chem})"),
+        "Semi-supervised CNN (Revio)"
     )
     dists_df = rbindlist(list(cnn, xgb, gmm, semi, revio)) 
 }else{
     cur_colors = MODEL_COLORS[c("GMM","SEMI", "Revio")]
     cur_labels = c(
-        "Subread model",
-        "Semi-supervised CNN",
-        "Revio (Semi-supervised CNN)"
+        glue("Subread model ({chem})"),
+        glue("Semi-supervised CNN ({chem})"),
+        "Semi-supervised CNN (Revio)"
     )
     dists_df = rbindlist(list(gmm, semi, revio)) 
 }
@@ -87,6 +89,10 @@ dists_df %>% group_by(tag) %>% summarise(n()/sum(unique(fiber_length))*100)
 
 
 ```{r}
+nrows=1
+if(length(cur_labels) >3){
+    nrows=2
+}
 source('Rscripts/utils.R')
 calls_per_group = dists_df %>% 
     filter(type=="m6A" & dist > 30 & dist < 300) %>%
@@ -119,10 +125,10 @@ for(with_revio in c(FALSE,TRUE)){
         ) +
         coord_cartesian(xlim=c(60,250)) +
         theme_minimal_grid() +
-        guides(color = guide_legend(override.aes = list(size = 1) ) )+
+        guides(color = guide_legend(nrow=nrows, override.aes = list(size = 2) ) )+
         theme(
             legend.position="top",
-            legend.text=element_text(size=9)
+            legend.text=element_text(size=8)
             )
     if (T){
     z = p + 
@@ -216,7 +222,7 @@ for(with_revio in c(FALSE,TRUE)){
         guides(color = guide_legend(override.aes = list(size = 2, shape="") ) )+
         theme(
             legend.position = "top",
-            legend.text=element_text(size=9)
+            legend.text=element_text(size=8)
             )
     my_ggsave("Figures/{sm}-autocorrelation-between-m6A{simple}{revio}.pdf", height=5, width=6)
 }
@@ -255,7 +261,7 @@ rt_df  %>%
     )+
     scale_x_continuous("Gbp of HiFi data")+
     theme_minimal_grid()
-my_ggsave("Figures/run-time-comparison.tsv", height=6, width=8)
+#my_ggsave("Figures/run-time-comparison.pdf", height=6, width=8)
 ```  
 
 
@@ -286,7 +292,7 @@ rt_df  %>%
     scale_color_manual(
         "",
         values=c(fibertools="purple", "ipdSummary"=MODEL_COLORS["GMM"][[1]]),
-        label=c("fibertools", "ipdSummary pipeline")
+        label=c("fibertools", "Subread pipeline")
     )+
     theme_minimal_grid()+
     guides(color = guide_legend(override.aes = list(size = 3)))+
@@ -299,8 +305,8 @@ my_ggsave("Figures/run-time-comparison.pdf", height=5, width=8)
 
 # FPR TPR precision recall figures
 ```{r}
-sm="PS00109_1"
 sm="PS00075_1"
+sm="PS00109_1"
 tp_df = fread(glue("Tables/{sm}-ROC-curve-data.csv")) %>% filter(tag!="pb") 
 pr_df = fread(glue("Tables/{sm}-precision-recall.csv")) %>% filter(tag!="pb")
 auc = fread(glue("Tables/{sm}-area-under.csv")) %>% filter(tag!="pb") %>% filter(tag != "semi") 
@@ -309,13 +315,14 @@ pr_df
 ```
 
 ```{r}
-zs=4
+zs=0.4
+s = 0.75
 p1 = tp_df %>%
     filter(tag != "semi") %>%
     ggplot(aes(x=FPR, y=TPR, color=tag))+
-    geom_line() +
+    geom_line(size=s) +
     facet_zoom(
-        xy = (FPR < 0.05) & (TPR > 0.5),
+        xy = (FPR < 0.025) & (TPR > 0.2),
         horizontal = FALSE,
         zoom.size=zs
     )+
@@ -323,12 +330,12 @@ p1 = tp_df %>%
     scale_y_continuous("True positive rate")+
     scale_color_manual(
         "Model",
-        values=c("red", "darkgray", "orange"),
+        values=c("purple", MODEL_COLORS["GMM"][[1]], "orange"),
         labels=c("CNN", "ipdSummary", "XGBoost")
     )+
     guides(color = guide_legend(override.aes = list(size = 3) ) )+
     theme_cowplot() +
-    theme(legend.position="left")
+    theme(legend.position="top") + coord_equal()
 
 library(grid)
 # Create a text
@@ -341,9 +348,9 @@ p2 = pr_df %>%
     ggplot(aes(x=precision, y=recall, color=tag))+
     geom_vline(aes(xintercept=0.9), linetype="dashed")+
     geom_hline(aes(yintercept=0.9), linetype="dashed")+
-    geom_line() +
+    geom_line(size=s) +
     facet_zoom(
-        xy = (precision > 0.5) & (recall > 0.5),
+        xy = (precision > 0.75) & (recall > 0.2),
         horizontal = FALSE,
         zoom.size=zs
     )+
@@ -351,11 +358,13 @@ p2 = pr_df %>%
     scale_y_continuous("Recall")+
     scale_color_manual(
         "Model",
-        values=c("red", "darkgray", "orange"),
+        #values=c("red", "darkgray", "orange"),
+        values=c("purple", MODEL_COLORS["GMM"][[1]], "orange"),
+        labels=c("CNN", "ipdSummary", "XGBoost")
     )+
     theme_cowplot() +
-    theme(legend.position="none")
+    theme(legend.position="none") + coord_equal()
 p1+p2
-my_ggsave("Figures/{sm}-roc-and-pr.pdf", height=6, width=14)
+my_ggsave("Figures/{sm}-roc-and-pr.pdf", height=5, width=8)
 print(auc)
 ```

@@ -14,7 +14,9 @@ from numba import njit
 
 MOTIFS = [("GAATTC", [2, 3]), ("GATC", [1, 2]), ("TCGA", [1, 2])]
 MOTIFS = ["GAATTC", "GATC", "TCGA"]
-
+MIN_EC = 6
+MIN_M6A = 5
+MASK_ORG = False
 
 def parse():
     """Console script for fibertools."""
@@ -24,7 +26,8 @@ def parse():
     parser.add_argument("tbl", nargs="+", help="fibertools-rs all table")
     parser.add_argument("-n", help="n rows to read", default=None, type=int)
     parser.add_argument("-b", help="buffer", default=0, type=int)
-    parser.add_argument("-t", help="threads", default=8, type=int)
+    parser.add_argument("-t", help="threads", default=16, type=int)
+    parser.add_argument("-m", "--motifs", nargs="+", help="fibertools-rs all table", default=None)
     # parser.add_argument("-o", "--out", help="Output bam file.", default=sys.stdout)
     parser.add_argument(
         "-v", "--verbose", help="increase logging verbosity", action="store_true"
@@ -37,16 +40,18 @@ def parse():
 
 
 def get_stats(row, buffer=0, motifs=None, by_ml=True):
-    seq = np.frombuffer(bytes(row.fiber_sequence, "utf-8"), dtype="S1")
+    seq = np.frombuffer(bytes(row.fiber_sequence, "utf-8"), dtype="S1").copy()
+    if MASK_ORG:
+        seq[950:1350] = b'C'
+        seq[3550:3950] = b'C'
+
     mask = np.zeros(seq.shape)
-    # for motif in motifs:
-    # search = "|".join(["(" + motif + ")" for motif in motifs])
-    # search = "|".join(["(?=" + motif + ")" for motif in motifs])
+    # search for motifs
     search = "|".join(motifs)
     if motifs[0] == "All-AT-bp":
         mask[0 : mask.shape[0]] = 1
     else:
-        for m in re.finditer(search, row.fiber_sequence):
+        for m in re.finditer(search, seq.tobytes().decode('UTF-8')):
             s = m.start()
             e = m.end()
             if s == e:
@@ -56,14 +61,18 @@ def get_stats(row, buffer=0, motifs=None, by_ml=True):
                 mask[s + 2 : e - 2] = 1
             else:
                 mask[s:e] = 1
+    # change mask to check for AT
+    is_at = (seq == b"A") | (seq == b"T")
+    # Set motif values not AT to zero
+    mask[~is_at] = 0
 
     if row.m6a is None:
         m6a = np.array([], dtype=int)
         m6a_qual = np.array([], dtype=int)
-        # return None
     else:
         m6a = np.array(row.m6a)
         m6a_qual = np.fromstring(row.m6a_qual, sep=",", dtype=np.int32)
+
     # iterate over different ml values for on target rates
     by_ml = {"on_target": [], "off_target": [], "min_ml": []}
     ml_targets = np.unique(m6a_qual)
@@ -71,16 +80,15 @@ def get_stats(row, buffer=0, motifs=None, by_ml=True):
         ml_targets = [0]
     for min_ml in ml_targets:
         use_m6a = m6a[m6a_qual >= min_ml]
-        by_ml["on_target"].append((mask[use_m6a] == 1).sum())
-        by_ml["off_target"].append((mask[use_m6a] == 0).sum())
+        on_t = (mask[use_m6a] == 1).sum()
+        off_t = (mask[use_m6a] ==0).sum()
+        by_ml["on_target"].append(on_t)
+        by_ml["off_target"].append(off_t)
         by_ml["min_ml"].append(min_ml)
 
     o_df = pd.DataFrame(by_ml)
     # print(o_df)
     # exit
-    is_at = (seq == b"A") | (seq == b"T")
-    # Set motif values not AT to zero
-    mask[~is_at] = 0
     # total AT count
     o_df["at_count"] = (seq == b"A").sum() + (seq == b"T").sum()
     # targets in the read
@@ -90,8 +98,6 @@ def get_stats(row, buffer=0, motifs=None, by_ml=True):
         seq[mask == 1] == b"T"
     ).sum()
 
-    # row["on_target"] = (mask[m6a] == 1).sum()
-    # row["off_target"] = (mask[m6a] == 0).sum()
     return o_df
 
 
@@ -100,20 +106,19 @@ def by_table(inputs, buffer=0, n_rows=None):
     sys.stderr.write(f"Reading {tbl} for {m}\n")
 
     fd = ft.read_fibertools_rs_all_file(tbl, pandas=True, n_rows=n_rows)
+    fd = fd[fd.ec > MIN_EC]
+    fd = fd[fd.total_m6a_bp > MIN_M6A]
     # ddata = dd.from_pandas(fd, npartitions=30)
     helper_fun = partial(get_stats, buffer=buffer, motifs=m)
     results = fd.apply(helper_fun, axis=1)
     results = pd.concat(list(results), axis=0)
-    # for x in results:
-    #    print(x)
-    # print(results)
-    # results = ddata.map_partitions(
-    #    lambda df: df.apply(helper_fun, axis=1)
-    # ).compute()
+    sys.stderr.write(f"{fd.shape} {results.shape}")
 
     rtn = ""
-    for min_ml in np.unique(results.min_ml):
-        cur_results = results[results.min_ml >= min_ml]
+    #for min_ml in np.unique(results.min_ml):
+        #cur_results = results.loc[results.min_ml >= min_ml]
+        #print(cur_results)
+    for min_ml, cur_results in results.groupby("min_ml"):
         on_target = cur_results.on_target.sum()
         off_target = cur_results.off_target.sum()
         motif_at_count = cur_results.motif_at_count.sum()
@@ -146,8 +151,13 @@ def main():
         + "\tn-of-m6A-bp"
     )
     combos = []
+    if args.motifs is not None:
+        motifs = args.motifs
+    else:
+        motifs = ["All-AT-bp"] + [MOTIFS] + MOTIFS
+
     for tbl in args.tbl:
-        for m in ["All-AT-bp"] + [MOTIFS] + MOTIFS:
+        for m in motifs:
             if type(m) != list:
                 m = [m]
             combos.append((tbl, m))

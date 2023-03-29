@@ -8,52 +8,219 @@ editor_options:
 ```{r, echo=FALSE}
 source('Rscripts/utils.R')
 target_ml_value = 244
+target_ml_value_per = target_ml_value/256*100
+convert = c(GAATTC="EcoR (GAm6ATTC)", GATC="Dam (Gm6ATC)", TCGA="TaqI (TCGm6A)")
+convert
+
 ```
 
 ```{r}
-motif_df = fread("Tables/Motif-on-target-table-2023-03-06.tsv") %>%
+motif_df = fread("Tables/Motif-on-target-table-2023-03-10.tsv") %>%
     group_by(file, motifs) %>% 
-    mutate(ave_motif_cov = mean(`motifs-covered-by-m6A`[min_ml==target_ml_value])) %>%
-    filter(ave_motif_cov > 0.05)
+    mutate(ave_motif_cov = mean(`motifs-covered-by-m6A`[min_ml==target_ml_value])) 
+
+expected_m6a = motif_df %>%
+    filter(motifs == "All-AT-bp") %>% 
+    mutate(
+        frac_m6a = `n-of-m6A-bp`/`n-of-motifs`
+    ) %>%
+    ungroup() %>%
+    select(file, min_ml, frac_m6a)
+
+# add enrichment at that coverage
+motif_df = motif_df %>%
+    merge(expected_m6a) %>%
+    mutate(
+        #enrichment_over_motif = (`m6A-within-motifs` * `n-of-m6A-bp`)/ (`n-of-m6A-bp` * `AT-bases-covered-by-motifs`),
+        n_m6a_within_motifs = `m6A-within-motifs`,
+        my_expected_m6a_within_motifs = frac_m6a * `AT-bases-covered-by-motifs`,
+        enrichment_over_motif = n_m6a_within_motifs / my_expected_m6a_within_motifs,
+        file=gsub("_ML.fiberseq.tbl.gz", "", file)
+    ) %>%
+    mutate(
+        is_genomic = file %in% c("PS00230", "PS00228", "PS00229"),
+    ) %>%
+    filter(
+        ave_motif_cov > 0.1
+    ) %>%
+    filter(motifs != "All-AT-bp") %>%
+    filter(motifs != "GAATTC;GATC;TCGA") %>%
+    filter(min_ml != 0) %>%
+    mutate(motifs = convert[motifs]) %>%
+    data.table()
 motif_df
 ```
 
 ```{r}
 motif_df %>% 
-    filter(motifs != "All-AT-bp") %>%
-    filter(motifs != "GAATTC;GATC;TCGA") %>%
-    filter(min_ml != 0) %>%
+    filter(is_genomic) %>%
     pivot_longer(
-        cols=c("motifs-covered-by-m6A", "m6A-within-motifs")
+        cols=c("motifs-covered-by-m6A", "m6A-within-motifs", "my_expected_m6a_within_motifs")
     ) %>%
+    mutate(
+        name = factor(name,
+            levels = c("motifs-covered-by-m6A", "m6A-within-motifs", "my_expected_m6a_within_motifs")
+        )
+    ) %>% 
     ggplot(
-        aes(x=min_ml, y=value, color=name)
+        aes(x=min_ml/256*100, y=value, color=name)
     ) + 
     geom_line() +
+    geom_vline(
+        aes(xintercept=target_ml_value_per),
+        color="darkred",
+        linetype="dashed",
+    ) +
     geom_point(
         data = . %>% filter(min_ml == target_ml_value)
     ) +
     scale_color_manual(
         "",
-        values=c("black", "red"),
-        labels=c("Percent of m6A events within motif", "Percent of motifs covered by m6A")
+        values=c(
+            "black",
+            "red",
+            "blue"
+            ),
+        labels=c(
+            "% of motifs covered by m6A",
+            "% of m6A events in motifs",
+            "Expected % of m6A events in motifs"
+            )
     ) +
     geom_label_repel(
         data = . %>% filter(min_ml == target_ml_value),
-        aes(label = percent(value, accuracy=0.01), x= min_ml, y=value, nudge_x = -10),
+        aes(label = percent(value, accuracy=0.01), y=value),
         nudge_y = 0.2,
         #nudge_x = 10,
         min.segment.length = 0,
+        show.legend = FALSE,
     ) +
-    facet_wrap(motifs~file) +
+    facet_wrap(~motifs) +
     scale_y_continuous(
         "",
         #"Percentage of target motifs with m6A",
         labels = scales::percent
     ) +
-    scale_x_continuous("Model prediction threshold") +
+    scale_x_continuous("Model estimated precision (%)") +
     theme_minimal_grid()+
     theme(legend.position="top") 
     
-my_ggsave("Figures/motifs.pdf", width=9)
+my_ggsave("Figures/motifs.pdf", width=9, height=5)
 ```
+
+
+```{r}
+motif_df %>%
+    filter(is_genomic) %>%
+    mutate(
+        off_target_rate = `m6A-coverage` - `m6A-within-motifs`
+    ) %>%
+    #filter(min_ml >=200) %>%
+    ggplot(
+        aes(x=min_ml/256*100,
+         y=enrichment_over_motif,
+         color=motifs,
+         group=paste0(file,motifs)))+
+    geom_line()+
+    geom_vline(
+        aes(xintercept=target_ml_value_per),
+        color="darkred",
+        linetype="dashed",
+    ) +
+    geom_point(
+        data = . %>% filter(min_ml == target_ml_value),
+    )+
+    geom_label_repel(
+        data = . %>% filter(min_ml == target_ml_value),
+        aes(
+            label = paste( paste0(
+                comma(round(enrichment_over_motif,1)),
+                "x"
+                 ), "")
+            ),
+        #nudge_y = 0.2,
+        #direction="x",
+        nudge_x = -10,
+        min.segment.length = 0,
+        show.legend = FALSE,
+    ) +
+    scale_y_continuous(
+        "Fold enrichment of m6A at the target motif",
+        trans="log10"
+    )+
+    scale_x_continuous("Model estimated precision (%)") +
+    annotation_logticks(side="l")+
+    scale_color_manual(
+        "",
+        values = c("darkblue", "orange", "darkcyan")
+    ) +
+    #facet_wrap(motifs~file) +
+    #facet_row(~motifs, scales="free_y") +
+    theme_minimal_grid() +
+    theme(legend.position="top") 
+my_ggsave("Figures/motif-enrichment.pdf", width=6, height=5)
+```
+
+
+
+```{r}
+fread("validation_data/from_ben/motif.tbl") %>% 
+    filter(motifs == "GATC") %>%
+    filter(file=="m64076_230318_142517.bc2021--bc2021.tbl.gz") %>%
+    pivot_longer(
+        cols=c("motifs-covered-by-m6A", "m6A-within-motifs")
+    ) %>%
+    mutate(
+        name = factor(name,
+            levels = c("motifs-covered-by-m6A", "m6A-within-motifs")
+        )
+    ) %>% 
+    ggplot(
+        aes(x=min_ml/256*100, y=value, color=name)
+    ) + 
+    geom_line() +
+    geom_vline(
+        aes(xintercept=target_ml_value_per),
+        color="darkred",
+        linetype="dashed",
+    ) +
+    geom_point(
+        data = . %>% filter(min_ml == target_ml_value)
+    ) +
+    scale_color_manual(
+        "",
+        values=c(
+            "black",
+            "red",
+            "blue"
+            ),
+        labels=c(
+            "% of motifs covered by m6A",
+            "% of m6A events in motifs",
+            "Expected % of m6A events in motifs"
+            )
+    ) +
+    geom_label_repel(
+        data = . %>% filter(min_ml == target_ml_value),
+        aes(label = percent(value, accuracy=0.01), y=value),
+        nudge_y = 0.2,
+        #nudge_x = 10,
+        min.segment.length = 0,
+        show.legend = FALSE,
+    ) +
+    facet_wrap(~motifs) +
+    scale_y_continuous(
+        "",
+        #"Percentage of target motifs with m6A",
+        labels = scales::percent
+    ) +
+    scale_x_continuous("Model estimated precision (%)") +
+    theme_minimal_grid()+
+    guides(color=guide_legend(ncol=1)) +
+    theme(
+        legend.position="top",
+        ) 
+    
+my_ggsave("Figures/motifs_plasmid.pdf", width=5, height=5)
+```
+

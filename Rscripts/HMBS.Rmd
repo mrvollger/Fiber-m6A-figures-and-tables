@@ -92,8 +92,16 @@ combo %>%
     ) +
     geom_xsidedensity(aes(x=centered_start), adjust=0.15, fill="darkgray") +
     #scale_xsidey_continuous(name="m6A density") +
-    geom_ysidehistogram(aes(y=y), position="fill") +
-    scale_ysidex_continuous(breaks=c(0.25, 0.75)) +
+    geom_ysidehistogram(
+        aes(y=y), 
+        position="fill",
+        binwidth=1
+    ) +
+    scale_ysidex_continuous(
+        breaks=c(0.0, 0.5, 1.00),
+        #guide = guide_axis(angle = -90),
+        position="top",
+    ) +
     scale_y_continuous(
         "Fiber-seq reads",
         breaks = seq(max(combo$y)),
@@ -104,7 +112,8 @@ combo %>%
     #    values = c(subread="green", both="darkgray", fibertools="purple")
     #) +
     scale_fill_manual("",
-        values = c(subread=Teal, both="gray", fibertools="purple")
+        values = c(subread=Teal, both="gray", fibertools="purple"),
+        labels = c("Subread pipeline", "Both", "fibertools"),
     ) +
     #facet_col(~is_ft) +
     theme_minimal_hgrid() +
@@ -113,5 +122,163 @@ combo %>%
     )
 
 s=1.2
-my_ggsave("Figures/HMBS_reference.pdf", width=s*12, height=s*6)
+my_ggsave("Figures/HMBS_reference.pdf", width=9, height=5)
+```
+
+
+
+
+```{r}
+dam_positions = c(
+    230,
+372,
+462,
+634,
+774,
+1073,
+1825,
+2023,
+2083,
+2168,
+2902,
+2938,
+2955,
+3213,
+3259,
+3277,
+3618,
+3723,
+3735,
+3813,
+3821,
+3832,
+3907)
+dam_positions = sort(c(dam_positions+1, dam_positions+2))
+
+start = 1000 
+end = 1000
+mid = round((start+end)/2)
+region = glue("linear_LeaGFP\t{mid}\t{mid+1}")
+fileConn<-file("temp.bed")
+writeLines(c(region), fileConn)
+close(fileConn)
+
+files = c("validation_data/from_ben/aln.m6a.bam")
+files
+
+dfs = list()
+dfs2 = list()
+for (file in files) {
+    cmd = glue('ft center -r {file} temp.bed')
+    dfs[[file]]=fread(cmd=cmd)
+    cmd = glue("samtools view -u -M -L temp.bed {file} | ft extract -s --all -")
+    dfs2[[file]]=fread(cmd=cmd)
+}
+
+fiber_tbl = bind_rows(dfs2) %>%
+    group_by(fiber, ec) %>%
+    summarise(
+        query_name = unique(fiber)
+    )
+```
+
+```{r}
+combo = bind_rows(dfs, .id="tool") %>% 
+    filter(centered_position_type=="m6a") %>%
+    group_by(query_name) %>%
+    mutate(
+        centered_start=centered_start+1000,
+        count = n()
+    ) %>%
+    ungroup() %>%
+    arrange(-count) %>%
+    mutate(
+        case=case_when(
+            centered_start %in% dam_positions ~ "Dam",
+            TRUE ~ "Other",
+        ),
+        z = factor(query_name, levels = unique(query_name)),
+        y = as.numeric(z)
+    )
+print(max(combo$y))
+```
+
+
+```{r}
+tdf = combo %>%
+    filter( y > 0) 
+tdf %>%
+    ggplot(
+        aes(x=centered_start, color=NULL, fill=case)
+    )+
+    #geom_point(alpha=0.5)+
+    #geom_hline(aes(yintercept=y), size = 0.1) +
+    geom_rect(
+        aes(ymin=y-0.45, ymax=y+0.45, xmin=centered_start, xmax=centered_start+0.9),
+        size=-0
+    ) +
+    geom_xsidehistogram(aes(x=centered_start), binwidth=1) +
+    #scale_xsidey_continuous(name="m6A density") +
+    scale_y_continuous(
+        "Fiber-seq reads",
+        breaks = seq(max(tdf$y)),
+        labels = rep("", max(tdf$y)),
+    ) +
+    scale_x_continuous("Genomic position", label=comma) +
+    scale_fill_manual("",
+        values = c("Other"=Teal, "Dam"="purple"),
+    ) +
+    #facet_col(~is_ft) +
+    theme_minimal_hgrid() +
+    theme(
+        legend.position="top"
+    )
+
+
+s=1.2
+my_ggsave("Figures/Plasmid_reference.pdf", width=9, height=5)
+```
+
+```{r}
+combo %>% 
+    group_by(centered_start,case) %>%
+    summarise(
+        count = 100*n()/length(fiber_tbl$fiber)
+    ) %>%
+    filter(
+        #count > 50
+        #case=="Dam",
+    ) %>% 
+    data.table() %>%
+    ggplot(
+        aes(
+            x=centered_start,
+            y=count,
+            fill=case,
+        ),
+    ) +
+    geom_bar(
+        stat="identity"
+    ) +
+    geom_text_repel(
+        data = . %>% filter(case=="Dam"),
+        aes(label=round(count,1)),
+        size=2,
+        min.segment.length=0,
+        max.overlaps=100,
+        #vjust=0.1,
+    ) +
+    scale_y_continuous(
+        "Percent m6A",
+    )+
+    scale_x_continuous("Plasmid position", label=comma) +
+    scale_fill_manual("",
+        values = c("Other"=Teal, "Dam"="purple"),
+    ) +
+    theme_minimal_hgrid() +
+    theme(
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+    )
+my_ggsave("Figures/Plasmid_simple_reference.pdf", width=9, height=5)
+
 ```

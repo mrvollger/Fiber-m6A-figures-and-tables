@@ -99,7 +99,7 @@ names(cur_colors) = c("ipdSummary", "fibertools", "Mass spec")
 cur_labels = c(
     "Subread model",
     "Semi-supervised CNN",
-    "Mass spec"
+    "Mass spectrometry"
 )
 
 bind_rows(m6a_per_df, ms_tbl, new_data) %>%
@@ -123,11 +123,16 @@ bind_rows(m6a_per_df, ms_tbl, new_data) %>%
     ggplot(aes(y = m6a_percent, x=Hia5, color=type)) +
     geom_line(size=.5) +
     geom_point(size=3, alpha=0.75) +
-    geom_text_repel(
-        aes(label = round(m6a_percent,2)),
+    geom_label_repel(
+        aes(label = paste0(round(m6a_percent,1), "%")),
         min.segment.length=0,
+        #alpha=0.75,
         #nudge_x = 1,
-        force=15,
+        direction="y",
+        size=2.5,
+        force=10,
+        show.legend=FALSE,
+        #force_pull=0.5,
     )+
     scale_x_continuous("WGA m6ATP concentration (uM)",
         trans="log10", #scales::pseudo_log_trans(),
@@ -139,7 +144,10 @@ bind_rows(m6a_per_df, ms_tbl, new_data) %>%
     annotation_logticks(side="lb") +
     scale_color_manual("", values=cur_colors, labels=cur_labels) + 
     theme_minimal_grid() +
-    theme(legend.position="top")
+    theme(
+        legend.position="top",
+        legend.text=element_text(size=11),
+    )
 my_ggsave("Figures/m6a-percent.pdf", height=5, width=6)
 ```
 
@@ -156,8 +164,8 @@ cmd = glue("{libs} && samtools view -@ 16 -u -F 2304 -s 0.01 {WGA_data} | ft pre
 print(cmd)
 system(cmd)
 ```
-
 ```{r}
+ff="validation_data/WGA.low.ml.ft.tbl.gz"
 m6a_vs_ml_tbl = read_m6a(
     ff,
     ref=F,
@@ -169,7 +177,7 @@ dim(AT_bp)
 ```
 
 ```{r}
-t=seq(200,255)
+t=seq(min(m6a_vs_ml_tbl$m6a_qual, na.rm=T),255)
 max_fpr = 20
 m6a_vs_ml_tbl %>% 
     select(m6a_qual, start, en, st, fiber, tag, type) %>%
@@ -184,24 +192,40 @@ m6a_vs_ml_tbl %>%
     ) %>%
     mutate(
         m6a_frac = 100*m6a/AT_bp,
-        ML_FPR = 100*(1.0 - threshold/255),  
+        ML_FPR = 100*(1.0 - threshold/256),  
     ) %>%
     filter(ML_FPR <= max_fpr) %>%
     #filter(type=="m6A") %>%
-    ggplot(aes(y= m6a_frac, x=ML_FPR)) +
+    ggplot(aes(y= m6a_frac, x=threshold/256*100)) +
     geom_line() +
-    geom_point() +
-    #geom_abline(slope=1, intercept=0, color="darkred", linetype="dashed") +
-    scale_x_continuous("Model predicted FPR (%)", 
-        #limits=c(0, max_fpr)
+    geom_point(
+        #data = . %>% filter(threshold==target_ml_value),
     ) +
+    geom_label_repel(
+        data = . %>% filter(threshold==target_ml_value),
+        aes(label=paste0(round(m6a_frac,2), "%")),
+        min.segment.length=0,
+        direction="x", 
+        nudge_x=5,
+        size=3
+        #arrow=arrow,
+    )+
+    geom_vline(
+        aes(xintercept=target_ml_value_per),
+        linetype="dashed", 
+        color="darkred",
+    ) +
+    #geom_abline(slope=1, intercept=0, color="darkred", linetype="dashed") +
+    scale_x_continuous("Model estimated precision (%)") +
+        #limits=c(0, max_fpr)
+    #) +
     scale_y_continuous("Percent m6A in WGA data",
         #limits=c(0, max_fpr)
     ) + 
     #coord_fixed() +
     theme_minimal_grid()
 
-my_ggsave("Figures/WGA-by-ML-tag.pdf")
+my_ggsave("Figures/WGA-by-ML-tag.pdf", height=5, width=4)
 ```
 
 
