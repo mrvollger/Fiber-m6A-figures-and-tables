@@ -97,3 +97,239 @@ top + bot + plot_layout(ncol = 1, height = c(1, 5))
 my_ggsave("Figures/Increase-in-m6A-calls-by-coverage.pdf", height=5, width=8)
 ```
 
+# by read length
+
+```{r}
+#min(ft_cov$fiber_length)
+m6a_by_cov = rbindlist(list(ft=ft_cov, gmm=gmm_cov), idcol=TRUE) %>%
+    as_tibble() %>%
+    #mutate(coverage = 1000*round(fiber_length/1000)) %>%
+    #mutate(coverage = case_when(
+        #coverage > 15 ~ 15,
+    #    TRUE ~ coverage
+    #)) %>%
+    expand_grid(coverage=seq(10000,35000,1000)) %>%
+    filter(fiber_length >= coverage) %>%
+    group_by(.id, coverage) %>%
+    summarise(n_fibers = n(), m6A = sum(total_m6a_bp), AT_bp = sum(total_AT_bp)) 
+    # %>% filter(n_fibers > 20)
+
+m6a_by_cov_ratio = m6a_by_cov %>% 
+    pivot_wider(id_cols = c("n_fibers", "coverage", "AT_bp"), names_from=".id", values_from = "m6A") %>%
+    mutate(
+        fc = round(ft/gmm,3) - 1
+    )
+
+my_id = function() trans_new("my_id", function(x) x, function(x) x)
+min_x = 4
+bot = m6a_by_cov_ratio   %>%
+    ggplot(aes(
+            x=coverage, y=100*fc,
+            color=fc,
+            fill=fc
+        )
+    ) +
+    geom_point() + geom_line() +
+    geom_text_repel(
+        data = . %>% filter(coverage%%5000 == 0 ),
+        aes(label=paste0(comma(100*fc), "%")),
+        nudge_y=-20,
+        #nudge_x=1,
+        size=3,
+        direction="y",
+        arrow = arrow(length = unit(0.015, "npc")),
+        min.segment.length=0,
+        segment.size=0.2,
+        color="black"
+        )+
+    geom_hline(
+        data=NULL,
+        aes(yintercept=0),
+        linetype="dashed", color="darkred"
+    ) +
+    scale_y_continuous(
+        "Percent increase in # of m6A calls for\nreads of a given length or greater",
+        #labels = function(x) paste0(100*x, "%"),
+        #trans="log10",
+        label=comma
+    ) + 
+    geom_xsidehistogram(
+        aes(
+            #y=ft
+            y=n_fibers
+        ),
+        stat="identity") +
+    scale_xsidey_continuous(
+        #labels = label_number(suffix = " M", scale = 1e-6),
+        #breaks = c(0e6, 4e6, 8e6)
+        breaks = c(0, 5e3, 10e3)
+    ) +
+    #annotation_logticks(side="l")+
+    scale_x_continuous("Minimum read length",
+        #breaks = seq(min_x,15),
+        #labels = c(seq(min_x,14), "15+")
+        label=comma,
+    )+
+    scale_fill_gradient(low = "#7712d2", high = "purple", trans="log10") +
+    scale_color_gradient(low = "#7712d2", high = "purple", trans="log10") +
+    theme_minimal_grid() + 
+    theme(
+        legend.position="none",
+        #ggside.panel.scale = .15,
+    )
+
+top = m6a_by_cov_ratio   %>%
+    ggplot(aes(
+            x=coverage, y=ft,
+            color=fc,
+            fill=fc
+        )
+    ) +
+    geom_bar(stat="identity") +
+    scale_y_continuous(
+        "# m6A bp",
+        labels = label_number(suffix = " M", scale = 1e-6)
+    ) +
+    scale_fill_gradient(low = "#7712d2", high = "purple", trans="log10") +
+    scale_color_gradient(low = "#7712d2", high = "purple", trans="log10") +
+    theme_minimal_grid() + 
+    theme(
+        legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()
+    ) 
+
+bot_dim = get_dim(bot)
+set_dim(top, bot_dim)
+
+#top + bot + plot_layout(ncol = 1, height = c(1, 5))
+bot
+my_ggsave("Figures/Increase-in-m6A-calls-by-read-length.pdf", height=5, width=8)
+```
+
+
+
+```{r}
+
+m6a_by_cov %>%
+    mutate(
+        #per_m6a = total_m6a_bp/total_AT_bp 
+        per_m6a = m6A/AT_bp
+    ) %>%
+    ggplot(aes(y=per_m6a, x=(coverage), color = .id)) +
+    geom_point()+
+    geom_line()+
+    #geom_violin()+
+    scale_y_continuous(
+        "Percent m6A",
+        label=percent
+    )+
+    geom_hline(
+        data = . %>% group_by(.id) %>% summarise(per_m6a=mean(per_m6a)),
+        aes(yintercept=per_m6a, color=.id),
+        linetype="dashed"
+    )  +
+    #geom_text_repel(aes(label=n_fibers))+
+    scale_x_continuous(
+    #scale_x_discrete(
+        "# CCS passes",
+    )+
+    scale_color_manual("", 
+        values=c(`ft`="purple", `gmm`=MODEL_COLORS["GMM"][[1]]),
+        labels = c("fibertools", "Subread model"),
+    )+
+    theme_minimal_grid() + 
+    theme(
+        legend.position = "top"
+    )
+
+my_ggsave("Figures/Percent-m6a-by-ccs-coverage.pdf", height=5, width=8)
+```
+```{r}
+rbindlist(list(ft=ft_cov, gmm=gmm_cov), idcol=TRUE) %>%
+    mutate(coverage = round(ec)) %>%
+    mutate(
+        length=1000*round(fiber_length/1000),
+    ) %>% group_by(length, .id) %>%
+    summarise(
+        AT_bp = sum(total_AT_bp),
+        m6a = sum(total_m6a_bp),
+        per_m6a = m6a/AT_bp,
+        count = n()
+    )%>%
+    filter(count > 100) %>%
+    ggplot(aes(y=per_m6a, x=(length), color = .id)) +
+    geom_point()+
+    geom_line()+
+    #geom_smooth(method="lm")+
+    #geom_violin()+
+    scale_y_continuous(
+        "Percent m6A",
+        label=percent
+    )+
+    #geom_text_repel(aes(label=n_fibers))+
+    scale_x_continuous(
+    #scale_x_discrete(
+        "Length of Fiber-seq read",
+        label=comma,
+    )+
+    scale_color_manual("", 
+        values=c(`ft`="purple", `gmm`=MODEL_COLORS["GMM"][[1]]),
+        labels = c("fibertools", "Subread model"),
+    )+
+    theme_minimal_grid() + 
+    theme(
+        legend.position = "top"
+    )
+
+my_ggsave("Figures/Percent-m6a-by-fiber-length.pdf", height=5, width=7)
+```
+
+```{r}
+subread_data = fread("subread_bytes movie
+713711655125    m54329U_210323_190418.subreads.bam
+592810344127    m54329U_210326_192251.subreads.bam
+656047073417    m54329U_210810_004956.subreads.bam
+662746940572    m54329U_210813_020940.subreads.bam
+688341883263    m54329U_210814_130637.subreads.bam
+865127629040    m64076_210328_012155.subreads.bam") %>%
+arrange(subread_bytes)
+ccs_data=fread("ccs_bytes  file
+110637477495    GM12878_1/GM12878_1_unaligned.fiberseq.bam
+89477014773     GM12878_2/GM12878_2_unaligned.fiberseq.bam
+129356479294    GM12878_3/GM12878_3_unaligned.fiberseq.bam
+72265340655     GM12878_4/GM12878_4_unaligned.fiberseq.bam
+92330327547     GM12878_5/GM12878_5_unaligned.fiberseq.bam
+74970016368     GM12878_6/GM12878_6_unaligned.fiberseq.bam") %>% 
+arrange(ccs_bytes)
+
+bind_cols(subread_data, ccs_data) %>%
+    mutate(
+        ccs_GB = ccs_bytes/1000^3,
+        subread_GB = subread_bytes/1000^3,
+        movie = gsub(".subreads.bam", "", movie),
+    ) %>%
+    mutate(
+        fold_diff = subread_GB/ccs_GB
+    ) %>%
+    pivot_longer(
+        c("ccs_GB", "subread_GB")
+    ) %>%
+    ggplot(aes(x=value, color=name, y = movie)) +
+    geom_point(size=3) +
+    geom_text_repel(
+        aes(label=comma(value)),
+        direction="x",
+        nudge_x=20
+    )+
+    theme_minimal_grid() +
+    scale_color_manual("", 
+        values=c("purple", MODEL_COLORS["GMM"][[1]])
+    )+
+    scale_x_continuous("File size (GB)")+
+    theme(
+        legend.position="top"
+    )
+my_ggsave("Figures/subread-vs-ccs-size.pdf", height=5)
+```

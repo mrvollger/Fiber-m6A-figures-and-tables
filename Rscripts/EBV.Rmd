@@ -154,3 +154,524 @@ p = cnn %>%
 ggsave("tmp.pdf", width=12)
 ```
 
+
+
+# CTCF sites
+```{r}
+regions=c(
+    "NC_007605.1 6469    6504    CTCF_XL 9.960000e-09    +",
+    "NC_007605.1     166517  166552  CTCF_XL 1.680000e-06    -"
+)
+regions=gsub(" ", "\t", gsub("\\s+", " ", regions))
+regions
+fileConn<-file("temp.bed")
+writeLines(regions, fileConn)
+close(fileConn)
+file="EBV/data/EBV.ft.bam"
+cmd = glue("ft center -r {file} temp.bed")
+ebv_ctcf = fread(cmd=cmd) %>%
+  filter(centered_position_type=="m6a") %>%
+    mutate(
+        id = paste0(chrom, ":", centering_position),
+    )
+ebv_ctcf
+```
+
+```{r}
+mod_start = 18
+mod_end = 30
+
+get_ctcf_binding_info = function(ebv_ctcf){
+
+    ebv_ctcf %>% 
+        group_by(
+            chrom, centering_position, id, strand, query_name
+        ) %>%
+        summarise(
+            left = sum(centered_start < mod_start & centered_start > mod_start - 40),
+            right = sum(centered_start > mod_end & centered_start < mod_end + 40),
+            motif = sum(centered_start >= mod_start & centered_start <= mod_end),
+            total=n()
+        ) %>%
+        filter(
+            left+right+motif > 4,
+            right > 0,
+            left > 0,
+        ) %>%
+        mutate(
+            has_ctcf = case_when(
+                motif < 1 ~ TRUE,
+                TRUE ~ FALSE,
+            )
+        )
+}
+ebv_sum = get_ctcf_binding_info(ebv_ctcf)
+
+fibers_at_both = ebv_sum %>%
+    group_by(query_name) %>%
+    summarise(
+        N=n()
+    ) %>% 
+    filter(
+        N==2
+    )
+
+ebv_sum = ebv_sum %>%
+    filter(query_name %in% unique(fibers_at_both$query_name))
+ebv_sum
+```
+
+
+```{r}
+ebv_sum %>%
+    ggplot(aes(x=motif)) + 
+    geom_bar(aes(y = after_stat(count / sum(count))))+
+    facet_col(~id)+
+    #geom_density()+
+    scale_y_continuous(labels = scales::percent)+
+    theme_minimal_grid()+
+    theme(
+        legend.position="top"
+    )
+my_ggsave("Figures/EBV-ctcf.pdf", height=5, width=5)
+```
+
+
+```{r}
+n_fibers = length(unique(ebv_sum$query_name))
+range = 4000
+ebv_ctcf %>%
+    filter(centered_start < 35 + range & centered_start > - range) %>%
+    filter(query_name %in% unique(fibers_at_both$query_name)) %>%
+    merge(ebv_sum) %>%
+    group_by(id) %>%
+    arrange(id, -motif) %>%
+    ungroup()%>%
+    mutate(y=as.numeric(factor(query_name, levels=unique(query_name)))) %>%
+    ggplot(
+        aes(x=centered_start, color=NULL, fill=has_ctcf)
+    )+
+    geom_rect(
+        aes(ymin=y-0.45, ymax=y+0.45, xmin=centered_start, xmax=centered_start+0.9),
+        size=-0
+    ) +
+    geom_vline(
+        data= .%>% group_by(id) %>% summarise(p=c(mod_start,mod_end)),
+        aes(xintercept=p),
+        linetype="dashed",
+        color="darkred"
+    )+
+    scale_y_continuous(
+        "Fiber-seq reads",
+        breaks=seq(1,n_fibers),
+        labels=c(1, rep("",n_fibers-2),n_fibers),
+        #limits=c(1,n_fibers)
+    ) +
+    scale_x_continuous("Offset from CTCF start position", label=comma) +
+    scale_color_manual(
+        values = c("green", "purple")
+    ) +
+    #scale_fill_manual("",
+        #values = c(subread=Teal, both="gray", fibertools="purple"),
+        #labels = c("Subread pipeline", "Both", "fibertools"),
+    #) +
+    facet_row(~id) +
+    theme_minimal_hgrid() +
+    theme(
+        legend.position="top"
+    )
+
+my_ggsave("Figures/EBV-ctcf.pdf", height=8, width=8 * range / 200, limitsize=F)
+```
+
+```{r}
+
+e = ebv_sum %>%
+    group_by(id) %>%
+    summarise(
+        percent = sum(has_ctcf)
+    ) %>% 
+    as.tibble()
+
+has_both = ebv_sum %>% 
+    group_by(query_name, has_ctcf) %>% 
+    summarise(
+        n=n(),
+    ) %>% filter(
+        n==2 & has_ctcf
+    ) 
+
+has_neither = ebv_sum %>% 
+    group_by(query_name, has_ctcf) %>% 
+    summarise(
+        n=n(),
+    ) %>% filter(
+        n==2 & !has_ctcf
+    ) 
+
+
+expected = 100*e$percent[[1]]/n_fibers*e$percent[[2]]/n_fibers
+observed = 100*dim(has_both)[[1]]/ n_fibers
+
+expected
+observed
+fisher.test(matrix(
+    c(
+        13, 47,
+        18, 45
+    ),
+    nrow=2
+))
+```
+
+
+```{r}
+file="EBV/CTCF.center.tbl.gz"
+all_ebv_ctcf=fread(file) %>%
+  filter(centered_position_type=="m6a") %>%
+    mutate(
+        id = paste0(chrom, ":", centering_position),
+    )
+all_ebv_ctcf_sum = get_ctcf_binding_info(all_ebv_ctcf)
+
+interact=fread("Tables/ebv_interact.tbl") %>% 
+    mutate(
+        mid1 = (start1 +end1)/2,
+        mid2 = (start2 +end2)/2,
+        sig = FDR < 0.05
+    ) 
+interact
+
+positions = unique(all_ebv_ctcf$centering_position)
+wiggle = 4000
+filt_interact = interact %>%
+    rowwise %>% 
+    mutate(
+        in_ctcf_1 = sum(start1 -wiggle < positions & end1 +wiggle> positions),
+        in_ctcf_2 = sum(start2 -wiggle < positions & end2 +wiggle> positions),
+    ) %>% 
+    filter(in_ctcf_1 & in_ctcf_2) %>%
+    filter(distance < 20e3 | distance > 150e3) 
+filt_interact
+```
+
+```{r}
+ebv_co_df = left_join(all_ebv_ctcf_sum, all_ebv_ctcf_sum, by = "query_name") %>% 
+    filter(id.x != id.y) %>% 
+    filter(centering_position.x < centering_position.y) %>%
+    #rowwise %>%
+    #mutate(name = toString(sort(c(id.x,id.y)))) %>% 
+    group_by(id.x, id.y, centering_position.x, centering_position.y) %>%
+    summarise(
+        total_fibers=n(),
+        has_ctcf.both = sum(has_ctcf.x & has_ctcf.y),
+        has_ctcf.neither = sum((has_ctcf.x == FALSE) & (has_ctcf.y == FALSE)),
+        has_ctcf.x_not_y = sum(has_ctcf.x & (has_ctcf.y == FALSE)), 
+        has_ctcf.y_not_x = sum((has_ctcf.x == FALSE) & has_ctcf.y), 
+        has_ctcf.x = sum(has_ctcf.x),
+        has_ctcf.y = sum(has_ctcf.y),
+    ) %>%
+    filter(
+        total_fibers > 50
+    ) %>%
+    rowwise() %>%
+    mutate(
+        expected = has_ctcf.x/total_fibers * has_ctcf.y/total_fibers,
+        observed = has_ctcf.both/total_fibers,
+        p_value = fisher.test(
+            matrix(
+                c(has_ctcf.both,has_ctcf.x_not_y,has_ctcf.y_not_x,has_ctcf.neither),
+                nrow=2
+            )
+        )$p.value
+    ) %>% 
+    arrange(p_value) %>%
+    filter(abs(centering_position.x - centering_position.y) > 00)
+ebv_co_df
+```
+
+
+### CTCF depth 
+```{r}
+depth = fread("EBV/data/CTCF_EBV.depth.tsv")
+colnames(depth) = c("chr", "pos", "coverage")
+min(depth$coverage)
+depth
+```
+
+```{r}
+wiggle=5e3
+a_size = 0.06
+curve = 0.15
+yseg = 0
+ptop=filt_interact %>%
+    ggplot()+
+    geom_curve(
+        aes(
+            x=mid1,
+            xend=mid2,
+            color=sig,
+            y=0, yend=0,
+        ),
+        alpha = 0.5,
+        arrow = arrow(length = unit(a_size, "npc")),
+        curvature = -curve,
+    ) +
+    geom_segment(aes(x=start1-wiggle,xend=end1+wiggle,color=sig,y=yseg, yend=yseg), alpha=0.5)+
+    geom_segment(aes(x=start2-wiggle,xend=end2+wiggle,color=sig,y=yseg, yend=yseg), alpha=0.5)+
+    scale_y_continuous(
+        " ", limits=c(0,1)
+    ) + 
+    theme_nothing()+
+    theme()
+
+depth[coverage==0]=1
+pmid = depth %>% 
+    filter(coverage>0) %>%
+    ggplot(aes(x=pos, y=coverage)) +
+    geom_line()+
+    scale_y_continuous(
+        limits=c(-15,NA),
+        breaks=seq(0,75,25)
+    ) + 
+    scale_x_continuous(
+        "Genomic position (EBV)",
+        label=comma
+    ) +
+    #facet_zoom(xlim = c(160000,170000),zoom.size=0.5)+
+    #scale_color_continuous("p-value") +
+    scale_y_continuous("CTCF ChIP-seq coverage") + 
+    theme_minimal_grid() +
+    theme()
+
+pbot = ebv_co_df %>%
+    mutate(sig = p_value < 0.05) %>% arrange(sig) %>%
+    ggplot()+
+    geom_curve(
+        aes(
+            x = centering_position.x,
+            xend = centering_position.y,
+            y=0, yend=0,
+            color = sig,
+            #size = sig+1,
+        ),
+        alpha = 0.5,
+        arrow = arrow(length = unit(a_size, "npc")),
+        curvature = curve,
+    ) +
+    geom_text_repel(
+        data = . %>% filter( p_value < 0.05),
+        aes(
+            x=(centering_position.x+centering_position.y)/2,
+            y=0,
+            label=percent(observed),
+        ),
+        direction="y",
+        nudge_y=-0.25,
+        hjust=0.5,
+    ) + 
+    scale_y_continuous(
+        "", limits=c(-1,0)
+    ) + 
+    theme_nothing()+
+    theme(
+        legend.position="right"
+    )
+
+z=ptop+pmid+pbot+plot_layout(ncol = 1, height = c(3, 3, 3), guides = 'collect') 
+#z=plot_grid(ptop, pmid, pbot, ncol=1, align="v") 
+z = z &  scale_color_manual("Significant",
+        values=c(`TRUE`="Darkblue", `FALSE`="gray")
+) & coord_cartesian(xlim=c(0,max(depth$pos)+10e3), clip="off")
+my_ggsave("Figures/EBV-CTCF-depth.pdf", height=5, width=8)
+```
+
+```{r}
+#contacts = fread("EBV/data/GSM4887088_LCL.ctr.1_5kb.txt.gz") %>%
+contacts = fread("EBV/data/GSM4887089_LCL.ctr.2_5kb.txt.gz") %>%
+    pivot_longer(!V1, names_to = "site2", values_to = "count") %>%
+    mutate(
+        site1=V1,
+        z_score = scale(count),
+        
+    )  %>%
+    separate(site1, c("ctg1", "st1", "en1"),convert = T) %>%
+    separate(site2, c("ctg2", "st2", "en2"), convert = T) 
+
+```
+
+```{r}
+contacts %>%
+    ggplot(aes(x=st1, y=st2)) +
+    geom_raster(aes(fill = z_score), interpolate = TRUE) + 
+    scale_fill_gradient2(name = "count", trans="reverse") +
+    theme_cowplot()
+my_ggsave("Figures/EBV-contacts.pdf", height=12, width=16)
+```
+
+```{r}
+contacts %>%
+    mutate(
+        strand = 0,
+        frag1=seq(n()),
+        frag2=frag1+1,
+    ) %>%
+    select(
+        strand,
+        ctg1, st1, en1, frag1,
+        ctg2, st2, en2, frag2,
+        count
+    ) %>%
+    fwrite(
+        "EBV/data/pre.juice",
+        col.names=F,
+        quote=F,
+        row.names=F,
+        sep="\t"
+    )
+```
+
+
+```{r}
+wiggle = 350
+s = 166388-wiggle
+e = 166626+wiggle
+po=all_ebv_ctcf_sum %>% 
+    filter(centering_position > s & centering_position < e) %>%
+    group_by(centering_position, strand) %>%
+    summarise(
+        percent_o = sum(has_ctcf)/n()
+    ) %>%
+    mutate(
+        end = case_when(
+            strand == "-" ~ centering_position - 35,
+            TRUE ~ centering_position + 35
+        )
+    )
+
+
+
+pcov = depth %>% 
+    filter(pos > s & pos < e) %>%
+    ggplot(aes(x=pos, y=coverage)) +
+    geom_line()+
+    geom_segment(
+        data=po,
+        aes(y=0,yend=0, x=centering_position, xend=end),
+        size=2, 
+        color="darkred",
+    )+
+    scale_y_continuous(
+        limits=c(-15,NA),
+        breaks=seq(0,75,25)
+    ) + 
+    scale_x_continuous(
+        " ",
+        label=comma
+    ) +
+    #facet_zoom(xlim = c(160000,170000),zoom.size=0.5)+
+    #scale_color_continuous("p-value") +
+    scale_y_continuous("CTCF ChIP-seq\ncoverage") + 
+    theme_minimal_grid() +
+    theme()
+
+ppo = ggplot(data=po) +
+    geom_rect(
+        aes(
+            ymin=0,
+            ymax=percent_o,
+            xmin = centering_position,
+            xmax=end
+        ),
+        fill="darkred",
+        #stat="identity"
+    ) +
+    scale_y_continuous("CTCF occupancy", limits=c(0,1), labels=percent) + 
+    scale_x_continuous(
+        "Genomic position (EBV)",
+        label=comma
+    ) +
+    theme_minimal_grid() +
+    theme()
+
+parc = ebv_co_df %>%
+    filter(centering_position.x > s & centering_position.x < e) %>%
+    filter(centering_position.y > s & centering_position.y < e) %>%
+    mutate(sig = p_value < 0.05) %>% arrange(sig) %>%
+    ggplot()+
+    geom_curve(
+        aes(
+            x = centering_position.x,
+            xend = centering_position.y,
+            y=0, yend=0,
+            color = sig,
+            #size = sig+1,
+        ),
+        alpha = 0.5,
+        arrow = arrow(length = unit(.5, "npc")),
+        curvature = -1,
+    ) +
+    geom_text_repel(
+        data = . %>% filter( p_value < 0.05),
+        aes(
+            x=(centering_position.x+centering_position.y)/2,
+            y=0,
+            label=percent(observed),
+        ),
+        #direction="y",
+        nudge_y=-0.25,
+        hjust=0.5,
+    ) + 
+    scale_y_continuous(
+        "", limits=c(-0.25,0.25)
+    ) + 
+    theme_nothing()+
+    theme(
+        legend.position="right"
+    )
+
+z = pcov + parc + ppo  + plot_layout(
+    heights=c(2,0.2,2),
+    ncol = 1,
+    guides = 'collect') 
+z= z & coord_cartesian(xlim=c(s,e), clip="off") &  
+    scale_color_manual("Significant",
+        values=c(`TRUE`="Darkblue", `FALSE`="gray")
+    ) 
+my_ggsave("Figures/EBV-CTCF-depth-zoom.pdf", height=5, width=6)
+```
+
+
+# co binding of LMP ORIP
+```{r}
+left_join(all_ebv_ctcf_sum, all_ebv_ctcf_sum, by = "query_name") %>% 
+    filter(centering_position.x == 6469) %>%
+    filter(centering_position.y >160e3) %>%
+    filter(id.x != id.y) %>% 
+    filter(centering_position.x < centering_position.y) %>%
+    group_by(id.x) %>% 
+    summarise(
+        total_fibers=length(unique(query_name)),
+        has_ctcf.both = sum(has_ctcf.x & has_ctcf.y),
+        has_ctcf.neither = sum((has_ctcf.x == FALSE) & (has_ctcf.y == FALSE)),
+        has_ctcf.x_not_y = sum(has_ctcf.x & (has_ctcf.y == FALSE)), 
+        has_ctcf.y_not_x = sum((has_ctcf.x == FALSE) & has_ctcf.y), 
+        has_ctcf.x = sum(has_ctcf.x),
+        has_ctcf.y = sum(has_ctcf.y),
+    ) %>%
+    filter(
+        total_fibers > 50
+    ) %>%
+    rowwise() %>%
+    mutate(
+        expected = has_ctcf.x/total_fibers * has_ctcf.y/total_fibers,
+        observed = has_ctcf.both/total_fibers,
+        p_value = fisher.test(
+            matrix(
+                c(has_ctcf.both,has_ctcf.x_not_y,has_ctcf.y_not_x,has_ctcf.neither),
+                nrow=2
+            )
+        )$p.value
+    ) %>% 
+    arrange(p_value) 
+```

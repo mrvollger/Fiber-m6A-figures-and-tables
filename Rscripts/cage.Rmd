@@ -1,0 +1,79 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE}
+system("mkdir -p Figures")
+source('Rscripts/utils.R')
+```
+
+```{r}
+ff="CAGE-validation/sr.tbl.gz"
+a=fread(ff)
+ff="CAGE-validation/ft.tbl.gz"
+b=fread(ff)
+keep=unique(a$query_name)
+keep2=unique(b$query_name)
+cage = bind_rows(list(fibertools=b, subread=a), .id="Tool") %>% 
+    filter(centered_position_type == "m6a" ) %>%
+    filter(query_name %in% keep) %>%
+    filter(query_name %in% keep2) 
+
+cage = cage %>%
+    mutate(
+        group = 5000 * floor(query_length / 5000), 
+        group = case_when(
+            #query_length > 35000 ~ 35000,
+            query_length > 30000 ~ 30000,
+            #query_length > 27500 ~ 27500,
+            TRUE ~ group,
+        ),
+        bin = 10*floor(centered_start/10) + 5,
+    )
+
+cage %>% 
+    group_by(group) %>%
+    summarise(
+        n(),
+        length(unique(query_name)),
+    )
+```
+
+```{r}
+cage_plot=cage %>% 
+    group_by(group, bin, Tool) %>%
+    #filter(bin < 1000 & bin > -1000) %>%
+    summarise(
+        value = n()
+    ) %>%
+    #filter(query_length < 30e3)  %>%
+    #group_by(group) %>% filter(row_number() < 1e5) %>% 
+    ggplot(
+        aes(x=bin, y=value, fill=Tool)
+    ) +
+    geom_histogram(
+        binwidth=10,
+        position="identity",
+        stat="identity",
+        alpha=0.75,
+    )+
+    scale_x_continuous("Distance from CAGE positive TSS", label=comma) +
+    scale_y_continuous("# m6A calls", label=comma)+
+    scale_fill_manual(
+        "",
+        values=c("purple", "darkgreen")
+    )+
+    theme_minimal_grid(font_size=10) +
+    facet_wrap(
+        ~paste(">", comma(group), "bp"),
+        scale="free_y",
+        ncol=2
+    ) +
+    theme(
+        legend.position="top"
+    )
+my_ggsave("Figures/CAGE.pdf", height=5, width=7)
+```

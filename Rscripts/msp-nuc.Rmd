@@ -1,0 +1,244 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+source('Rscripts/utils.R')
+library(RColorBrewer)
+```
+
+```{r}
+a=fread(
+    "../new-nuc-caller/new.nuc_mps_lengths.tbl.gz", 
+    col.names=c("RG","nuc_starts", "nuc_lengths", "msp_starts", "msp_lengths", "c")
+)
+#c=fread(
+#    "../new-nuc-caller/dseg.nuc_mps_lengths.tbl.gz", 
+#    col.names=c("RG", "nuc_lengths", "msp_lengths", "c")
+#)
+b=fread("../new-nuc-caller/nuc_mps_lengths.tbl.gz") %>%
+as_tibble()
+b
+```
+```{r}
+nuc_msp = bind_rows(list(new=a,old=b),.id="id") %>%
+ #sample_n(100e3) %>%
+ pivot_longer(cols = ends_with("lengths")) %>%
+ cSplit(c("value"), direction = "long") %>%
+ filter(!grepl("40_hour", RG)) %>%
+ mutate(
+    value = as.numeric(value),
+    id = paste(id, c),
+ ) %>%
+ filter(
+    !is.na(value)
+ )
+nuc_msp
+```
+
+```{r}
+max_value = 400
+nuc_sum = nuc_msp %>% 
+    group_by(RG, id, name,c) %>%
+    summarise(
+        `400` = sum(value >= max_value)/n(),
+        `1` = sum(value ==1)/n()
+    ) %>% 
+    pivot_longer(cols = c("400", "1"), names_to="xpos") %>%
+    mutate(
+        xpos=as.numeric(xpos)
+    ) %>%
+    filter( !(value<=0 & name == "nuc_lengths") ) %>%
+    replace_na(list(c = 0)) %>%
+    arrange(c) %>%
+    mutate(
+        c_factor=factor(c, levels=unique(c))
+    )
+
+nuc_sum
+nuc_hist = nuc_msp %>% 
+    group_by(RG, id, name, value, c) %>%
+    summarise(
+        count = n()
+    ) %>% 
+    replace_na(list(c = 0)) %>%
+    arrange(c) %>%
+    mutate(
+        c_factor=factor(c, levels=unique(c))
+    )
+```
+```{r}
+unique(nuc_hist$c)
+breaks = seq(70,145,10)
+breaks = unique(
+    sort(
+        c(
+            #min(nuc_hist$c, na.rm=T)-5,
+            unique(nuc_hist$c),
+            #max(nuc_hist$c, na.rm=T)+5),
+            NA
+        )
+    )
+) 
+breaks
+#breaks = c(1,2,10)
+colors = rev(brewer.pal(length(breaks),"Spectral"))
+nuc_hist %>%
+    filter(!grepl("new 3", id)) %>%
+    filter(value < max_value & value > 1) %>%
+    #filter(name=="nuc_lengths") %>%
+    ggplot(aes(x=value, y=count, 
+        fill=c_factor, color=c_factor,
+        group=id)
+    ) +
+    #geom_histogram(binwidth=1, position="identity", alpha=0.75)+
+    geom_step(alpha=0.85, size=0.5) +
+    geom_label_repel(
+        data = nuc_sum,
+        aes(
+            label = percent(round(value,3)), 
+            x=xpos, y=mean(nuc_hist$count)*5,
+            group=id
+        ),
+        color="black",
+        alpha=0.55,
+        size=3,
+        force=10,
+        nudge_y = -100,
+        max.overlaps=10000,
+        direction="y"
+    ) +
+    #geom_density() +
+    geom_vline(xintercept=147, linetype="dashed", color="black")+
+    facet_grid(RG~name, scale="free_y") +
+    #scale_y_continuous(trans="log10", label=comma) + annotation_logticks(side="l")+
+    theme_minimal_grid() +
+    #scale_fill_manual(values=c("darkred", "darkgray")) +
+    #scale_colour_stepsn(colours = colors)+
+    #scale_fill_stepsn(colours = colors)+
+    scale_fill_brewer("", palette="Set1")+
+    scale_color_brewer("", palette="Set1")+
+    theme(
+        legend.position="top",
+        legend.key.width = unit(3, 'cm'),
+    )
+my_ggsave("../new-nuc-caller/nuc_lengths.pdf", height=40, width=16)
+warnings()
+```
+
+# compare 
+```{r}
+xx=bind_rows(list(new=a,old=b),.id="id") %>% 
+    filter(RG=="ft_GM12878_2.fiberseq") %>%
+    group_by(id, RG) %>%
+    mutate(read_id = seq(n())) %>%
+    #head(1000) %>%
+    select(-msp_starts, -msp_lengths, -c) %>%
+    cSplit(c("nuc_starts", "nuc_lengths"), direction="long") %>%
+    mutate(
+        nuc_starts = as.numeric(nuc_starts),
+        nuc_lengths = as.numeric(nuc_lengths),
+    ) %>%
+    filter(
+        !is.na(nuc_starts) & !is.na(nuc_lengths)
+    )
+
+merge_cols = colnames(xx)
+new = xx[id=="new"]
+old = xx[id=="old"]
+new$new=TRUE
+old$old=TRUE
+yy = merge(new,old, by = merge_cols[merge_cols!="id"], all=TRUE)
+dim(xx)/1e6
+dim(yy)/1e6
+yy %>%
+    filter(nuc_lengths < 400) %>%
+    mutate(
+        case = case_when(
+            new & old ~ "both",
+            new ~ "new",
+            old ~ "old",
+            TRUE ~ "both",
+        )
+    ) %>%
+    ggplot(aes(x=nuc_lengths, fill=case)) + 
+        geom_histogram(binwidth=1) +
+        facet_col(~case, scale="free_y") +
+        theme_minimal_grid()
+my_ggsave("../new-nuc-caller/diff_nuc_lengths.pdf", height=5, width=8)
+```
+
+
+
+```{r}
+file="../new-nuc-caller/genes.merged.center.tbl.gz"
+nuc_center = fread(file)
+file="../new-nuc-caller/genes.new.merged.center.tbl.gz"
+nuc_center_new = fread(file)
+nuc_center=bind_rows(list(old=nuc_center, new=nuc_center_new), .id="id")
+nuc_center[centered_start < -1000]$centered_start = -1000
+nuc_center[centered_end > 1000]$centered_end = 1000
+nuc_center[,
+    m6a_count:=sum(centered_position_type=="m6a"),
+    by=list(query_name, centering_position)
+]
+nuc_center[,
+    shared_count:=.N,
+    by=list(query_name, centering_position, centered_position_type, centered_start, centered_end)
+]
+nuc_center[centered_position_type=="msp" & shared_count == 1] %>% as_tibble()
+nuc_center[centered_position_type=="msp" & shared_count > 1]$centered_position_type = "shared_msp"
+```
+
+```{r}
+nuc_center %>%
+    filter(grepl("ft_GM12878_", RG)) %>%
+    filter(centered_position_type!="5mC") %>%
+    #filter(centered_start > -1000 & centered_end < 1000) %>%
+    #filter(centering_position==109209371) %>%
+    filter(centering_position==28903736) %>%
+    filter(m6a_count>50) %>%
+    #head(1000) %>%
+    mutate(
+        start = centered_start + centering_position,
+        end = centered_end + centering_position,
+        y = as.numeric(factor(id, levels=c("old", "new"))),
+        size = case_when(
+            centered_position_type == "m6a" ~ 0.39,
+            centered_position_type == "msp" ~ 0.15,
+            centered_position_type == "shared_msp" ~ 0.15,
+            TRUE ~ 0.1,
+        ),
+    ) %>%
+    ggplot(
+        aes(
+            x=start,xend=end,xmin=start, xmax=end,
+            ymax=y+size, ymin=y-size,
+            fill=centered_position_type, 
+        )
+    ) +
+    geom_rect() +
+    #facet_col(~query_name, scale="free_y")+
+    facet_nested( RG + query_name ~ .) +
+    scale_fill_manual(
+        values=c(m6a="purple", nuc="darkgray", msp="darkred", shared_msp="darkgreen")
+    )+
+    scale_x_continuous("genomic position", label=comma, n.breaks=100)+
+    #theme_nothing() + 
+    theme_minimal_vgrid()+
+    theme(
+        strip.background = element_blank(),
+        strip.text.x = element_blank(),
+        legend.position="top",
+        panel.grid.major.x = element_line(
+            color = "darkblue",
+            size = 0.01,      
+            linetype = 2
+        )
+    )
+my_ggsave("../new-nuc-caller/compare_nucs.pdf", height=40, width=12)
+```

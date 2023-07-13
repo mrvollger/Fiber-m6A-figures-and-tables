@@ -1,0 +1,145 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE}
+system("mkdir -p Figures")
+source('Rscripts/utils.R')
+```
+
+```{r}
+ff="ONT/HG002_2.tbl.gz"
+a = read_m6a(
+    ff,
+    ref=F,
+    ec_min=-1,
+    min_ml=1
+) 
+AT_bp_a = fread(glue("hck -z  -F sam_flag -F fiber -F total_AT_bp -F ec {ff}")) 
+
+ff="ONT/HG002_3.tbl.gz"
+b = read_m6a(
+    ff,
+    ref=F,
+    ec_min=-1,
+    min_ml=1
+)
+AT_bp_b = fread(glue("hck -z  -F sam_flag -F fiber -F total_AT_bp -F ec {ff}")) 
+AT_bp = bind_rows(list(m6A=AT_bp_a, control=AT_bp_b))
+AT_bp
+ont_tbl = bind_rows(list(m6A=a, control=b), .id="ID")%>% 
+    filter(type=="m6A") 
+ont_tbl %>% group_by(ID) %>% summarise(n())
+```
+
+```{r}
+min_t = 150
+t = seq(min_t,256)
+plot_onts = list()
+plot_ont = ont_tbl %>% 
+    select(m6a_qual, start, en, st, fiber, tag, type, ID) %>%
+    filter(m6a_qual>=min_t) %>% 
+    merge(AT_bp, by=c("fiber")) %>%
+    mutate(
+        total_AT_bp = total_AT_bp/2,
+    )
+for(thresh in t){
+    print(thresh)
+    z = plot_ont %>%
+    mutate(threshold = thresh) %>%
+    filter(m6a_qual >= threshold | is.na(m6a_qual)) %>%
+    group_by(threshold, ID) %>%
+    summarise(
+        m6a = sum(type=="m6A"),
+        AT_bp = sum(unique(total_AT_bp))
+    ) %>%
+    mutate(
+        m6a_frac = 100*m6a/AT_bp,
+        ML_FPR = 100*(1.0 - threshold/256),  
+    )
+    plot_onts[[thresh-min_t+1]] = z
+}    
+zz = bind_rows(plot_onts)
+zz
+```
+
+```{r}
+zz %>%
+    ggplot(aes(y= m6a_frac, x=threshold/256*100, color=ID)) +
+    geom_line() +
+    geom_point(
+        #data = . %>% filter(threshold==target_ml_value),
+    ) +
+    geom_label_repel(
+        data=. %>% filter(ML_FPR %% 5 <= 0.35),
+        aes(label=round(m6a_frac,2)),
+        min.segment.length=0,
+        nudge_x=5,
+    )+
+    #geom_abline(slope=1, intercept=0, color="darkred", linetype="dashed") +
+    scale_x_continuous("Dorado estimated precision (%)") +
+        #limits=c(0, max_fpr)
+    #) +
+    scale_y_continuous("% m6A in ONT data",
+        #limits=c(0, max_fpr)
+    ) + 
+    #coord_fixed() +
+    theme_minimal_grid()+
+    scale_color_discrete("", labels=c("Control", "ONT Fiber-seq"))+
+    theme(
+        legend.position="top",
+    )
+my_ggsave("Figures/ONT-by-ML-tag.pdf", height=5, width=5)
+```
+
+```{r}
+zzz = zz %>% pivot_wider(
+        id_cols=c(threshold),
+        names_from=c(ID),
+        values_from=c(m6a_frac, ML_FPR),
+    ) %>%
+    mutate(
+        value = m6a_frac_control/( m6a_frac_m6A  ),
+        real_m6a = m6a_frac_m6A - m6a_frac_control,
+        fiber_seq_range = real_m6a > 5 & real_m6a < 10,
+    ) 
+
+zzz %>%
+    ggplot(aes(y=value, x=threshold/256*100)) +
+    geom_line() +
+    geom_point(
+        aes(color=fiber_seq_range)
+        #data = . %>% filter(threshold==target_ml_value),
+    ) +
+    geom_vline(
+        data = . %>% 
+            filter(fiber_seq_range==TRUE) %>% 
+            group_by(fiber_seq_range) %>%
+            arrange(real_m6a) %>%
+            filter(row_number()==1 | row_number()==n()),
+            #filter(real_m6a==pmax(real_m6a) | real_m6a==pmin(real_m6a)),
+        aes(
+            xintercept=threshold/256*100,
+        )
+    )+
+    #geom_abline(slope=1, intercept=0, color="darkred", linetype="dashed") +
+    scale_x_continuous("Dorado estimated precision (%)") +
+        #limits=c(0, max_fpr)
+    #) +
+    scale_y_continuous("Estimated % of m6A calls that are false",
+        labels=percent
+    ) + 
+    #annotation_logticks(side="l")+
+    #coord_fixed() +
+    #scale_colour_steps2("Estimated % m6A", breaks=seq(1,20))+
+    scale_color_discrete("Expected range\nfor Fiber-seq")+
+    theme_minimal_grid()+
+    theme(
+        legend.position="top",
+    )
+
+my_ggsave("Figures/ONT-ratio-ML-tag.pdf", height=5, width=5)
+```

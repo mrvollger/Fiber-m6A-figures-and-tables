@@ -1,0 +1,275 @@
+```{r}
+source('Rscripts/utils.R')
+```
+
+
+```{r}
+#revio = read_m6a("revio-training/tmp.tbl.gz", my_tag="SEMI", min_ml=230, ref=F)
+#revio = read_m6a("revio-training/3.2.tbl.gz", my_tag="SEMI", min_ml=230, ref=F)
+in_revio = read_m6a("revio-training/tmp.revio.tbl.gz", my_tag="SEMI", min_ml=230, ref=F)
+```
+```{r}
+revio = in_revio[m6a_qual >= 255] 
+revio[
+    order(start),
+    c("dist", "count_per_fiber"):= list(start - lag(start), .N),
+    by=list(tag, type, fiber, RG)
+]
+revio$Cell = gsub(".*bc.*\\.", "", revio$RG)
+revio$PS = gsub(".bc.*", "", revio$RG)
+revio$PS = gsub("revio.", "", revio$PS)
+revio$PS = gsub("xx.", "", revio$PS)
+manifest = fread("revio-training/manifest.tsv", 
+    header=FALSE,
+    select=c(1,2),
+    #header=as.character(seq(8))
+)
+colnames(manifest) = c("PS", "sample")
+revio_all = merge(revio, manifest)
+
+revio_all %>% group_by(RG) %>% summarise(n(), 100 * sum())
+
+p = revio_all %>%
+    filter(count_per_fiber > 200) %>%
+    filter(type=="m6A" & dist >= 40 & dist < 300) %>%
+    ggplot(aes(x=dist)) +
+    geom_density(aes(color=sample), adjust=0.5) +
+    scale_x_continuous("Distance between adjacent m6A") +
+    scale_y_continuous("Density") +
+    #scale_color_manual("", 
+    #    values=cur_colors,
+    #    labels=cur_labels,
+    #) +
+    coord_cartesian(xlim=c(60,250)) +
+    theme_minimal_grid() +
+    facet_row(~Cell) + 
+    #guides(color = guide_legend(nrow=nrows, override.aes = list(size = 2) ) )+
+    theme(
+        #legend.position="top",
+        legend.text=element_text(size=8)
+    )
+
+if (F){
+    z = p + 
+        geom_vline(data=NULL, aes(xintercept=147), linetype="dashed", color="black", alpha=0.5) +
+        geom_text_repel(
+            data = get_maxima_from_plot(p, n_keep=1),
+            aes(x=x, y=y, label=round(x)), 
+            size = 3,
+            #nudge_y=0.001,
+            min.segment.length = 0, # draw all line segments
+        )
+} else {
+   # z=p+ facet_zoom(x = dist > 60 & dist < 250,  horizontal = FALSE, shrink=TRUE, ylim=c(0,0.015))
+
+}
+my_ggsave(
+    "Figures/revio-train.pdf", 
+    height=5,
+    width=12
+)
+```
+
+
+```{r}
+LAG=250
+revio_all$tag = revio_all$sample
+calls_per_group2 = revio_all %>% 
+    filter(type=="m6A") %>%
+    group_by(tag) %>% summarise(count=n())
+min_count2 = min(calls_per_group2$count)
+#min_count2=20e5
+
+t = revio_all %>%
+    filter(type=="m6A") %>%
+    group_by(tag) %>%
+    mutate(row_num = seq(n())) %>%
+    filter(row_num < min_count2) %>%
+    group_by(tag, fiber) %>%
+    summarise(
+        count = n(),
+        index = list(seq(0, max(start)) %in% start)
+    )  %>%
+    filter(count > 400) %>%
+    ungroup() %>%
+    group_by(tag) %>%
+    summarise(
+        auto = acf(as.numeric(unlist(index)), lag.max = LAG, plot = F)$acf,
+    ) %>%
+    group_by(tag) %>%
+    mutate(
+        lag = seq(n())
+    ) %>%
+    data.table()
+t %>% group_by(tag) %>% summarise(n())
+```
+
+```{r}
+t$change <- c(0, (t$auto[1:(length(t$auto)-1)] * t$auto[2:length(t$auto)]) <= 0)
+t[change==1]
+
+t %>%
+    filter(lag > 25) %>%
+    ggplot(aes(x=lag, y=auto, color=tag)) +
+    geom_hline(aes(yintercept=0), color="darkblue", size=1, linetype="dashed") + 
+    geom_vline(data=NULL, aes(xintercept=147), linetype="dashed", color="black", alpha=0.5) +
+    geom_line() +
+    geom_label_repel( data = . %>% filter(change == 1),
+        aes(y=0, x = lag, label=lag),
+        min.segment.length = 0, # draw all line segments
+        nudge_x=5,
+        nudge_y=0.01,
+        show.legend = FALSE,
+    )+
+    theme_minimal_grid() + 
+    scale_y_continuous("Autocorrelation between m6A events") + 
+    scale_x_continuous("Lag between m6A events") + 
+    guides(color = guide_legend(override.aes = list(size = 2, shape="") ) )+
+    theme(
+        legend.position = "top",
+        legend.text=element_text(size=4)
+        )
+my_ggsave("Figures/revio-autocorrelation-between-m6A.pdf", height=5, width=6)
+
+```
+```{r}
+in_revio %>%
+    ggplot(aes(x=m6a_qual)) + 
+    geom_histogram(binwidth=1)+
+    facet_col(~RG)+
+    scale_y_continuous(trans="log10")+
+    theme_minimal_grid() 
+my_ggsave("Figures/revio-m6a-qual-hist.pdf", height=16, width=8)
+```
+
+```{r}
+x=fread("revio-training/tmp.tbl.gz")
+x=fread("revio-training/tmp.revio.tbl.gz")
+x %>% group_by(RG) %>%
+    summarise(
+        z = 100*sum(total_m6a_bp)/sum(total_AT_bp)
+    ) %>%
+    arrange(z)
+```
+
+```{r}
+in_revio %>%
+    drop_na(m6a_qual) %>%
+    mutate(
+        g250 = m6a_qual >= 250,
+        g251 = m6a_qual >= 251,
+        g252 = m6a_qual >= 252,
+        g253 = m6a_qual >= 253,
+        g254 = m6a_qual >= 254,
+        g255 = m6a_qual >= 255,
+    ) %>%
+    group_by(RG) %>%
+    summarise(
+        sum(g250)/1e6,
+        sum(g251)/1e6,
+        sum(g252)/1e6,
+        sum(g253)/1e6,
+        sum(g254)/1e6,
+        sum(g255)/1e6,
+    ) %>%
+    arrange(`sum(g255)/1e+06`)
+```
+
+
+```{r}
+fdr = fread("../phased-fdr-and-peaks/altius/dhs_peaks/all.bed") %>% select(-V16)
+x="sample ID type
+d2_stim DS129920A DNase
+d2_stim DS129923A DNase
+d2_rest DS129925A DNase
+d2_rest DS129940A DNase
+d2_rest D2_rest_hap1_gm Fiberseq
+d2_rest D2_rest_hap2_gm Fiberseq
+d2_rest D2_rest_unk_gm Fiberseq
+d2_stim D2_stim_hap1_gm Fiberseq
+d2_stim D2_stim_hap2_gm Fiberseq
+d2_stim D2_stim_unk_gm Fiberseq
+"
+altius_samples = fread(x)
+keep = colnames(fdr) %in% c(altius_samples$ID,"#ct","st","en")
+fdr = fdr %>% select(colnames(fdr)[keep])
+fdr
+```
+
+```{r}
+experiments = fdr %>% select(starts_with("D")) %>% colnames
+data.table(experiments)
+pairs = combn(experiments,2, simplify=F)
+dfs = list()
+for(pair in pairs){
+    x = pair[[1]]
+    y = pair[[2]]
+    print(paste(x,y))
+    cols = c("#ct", "st", "en", x ,y)
+    z=fdr[,..cols]
+    colnames(z) = c("#ct", "st", "en", "exp1", "exp2")
+    z$name1 = x
+    z$name2 = y
+    z = z[ (exp1>0 | exp2>0) & (en > st) ]
+    dfs[[paste(x,y)]] = z %>%
+        merge(altius_samples, by.x="name1", by.y="ID", suffix = c("", ".x")) %>%
+        merge(altius_samples, by.x="name2", by.y="ID", suffix = c("", "2")) 
+}   
+fdr_pairs = bind_rows(dfs) 
+```
+
+
+```{r}
+correlations = fdr_pairs[,
+    .(corr=.(cov.wt(cbind(exp1,exp2), wt = en-st, cor = TRUE)[["cor"]][[2]])),
+    by = c(name1, name2)
+]
+```
+
+```{r}
+correlations %>%
+    unnest(cols=corr) %>%
+    dplyr::arrange(-corr)
+```
+
+
+```{r}
+fdr_pairs %>% 
+    sample_n(10e6) %>%
+    #filter(sample1 == sample2) %>%
+    filter(name1!=name2) %>%
+    filter(exp1 > 0 & exp2 > 0) %>%
+    #group_by(type,sample,sample2,type2) %>%
+    ggplot(aes(x=exp1, y=exp2)) +
+    stat_cor() +
+    geom_hex() +
+    #facet_grid(name2~name1) +
+    facet_nested(type+sample+name1 ~ type2+sample2+name2) +
+    scale_fill_distiller("", palette = "Spectral", trans="log10") +
+    scale_y_continuous(trans="log10", labels=comma) +
+    scale_x_continuous(trans="log10", labels=comma) +
+    annotation_logticks(sides="lb") +
+    theme_cowplot()
+my_ggsave("../phased-fdr-and-peaks/figures/altius-correlations.pdf", height=20, width=24)
+```
+
+
+```{r}
+fdr %>%
+    summarise(
+        mean(en-st),
+        median(en-st),
+        sd(en-st),
+    )
+```
+
+
+```{r}
+t=fdr_pairs %>% head(1000) 
+wtd.cor(t$exp1, y=t$exp2, weight=t$en-t$st)
+
+correlations = fdr_pairs[,
+    .(z=wtd.cor(exp1, exp2, weight=en-st)),
+    by = c("name1", "name2")
+]
+```

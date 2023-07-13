@@ -1,7 +1,5 @@
 ```{r}
 source('Rscripts/utils.R', chdir = TRUE)
-library("purrr")
-library("reticulate")
 ```
 
 
@@ -102,7 +100,7 @@ cur_labels = c(
     "Mass spectrometry"
 )
 
-bind_rows(m6a_per_df, ms_tbl, new_data) %>%
+ms_plot_df = bind_rows(m6a_per_df, ms_tbl, new_data) %>%
     filter(sm != "PS00243" & sm != "PS00244") %>%
     filter(grepl("with", sample)) %>%
     filter(!(type=="fibertools" & !is.na(file) )) %>%
@@ -119,7 +117,15 @@ bind_rows(m6a_per_df, ms_tbl, new_data) %>%
     arrange(m6a_percent) %>%
     mutate(
         sm = factor(sm, levels=unique(sm))
-    ) %>%
+    ) 
+
+ms_ipd = ms_plot_df[type=="ipdSummary"]$m6a_percent
+ms_ft = ms_plot_df[type=="fibertools"]$m6a_percent
+ms_ms = ms_plot_df[type=="Mass spec"]$m6a_percent
+cor.test(ms_ms, ms_ft)
+cor.test(ms_ms, ms_ipd)
+
+ms_plot_df %>%
     ggplot(aes(y = m6a_percent, x=Hia5, color=type)) +
     geom_line(size=.5) +
     geom_point(size=3, alpha=0.75) +
@@ -150,7 +156,40 @@ bind_rows(m6a_per_df, ms_tbl, new_data) %>%
     )
 my_ggsave("Figures/m6a-percent.pdf", height=5, width=6)
 ```
-
+# m6a percent version 2 with correlation
+```{r}
+library(ggpubr)
+ms_plot_df %>%
+    filter(type != "ipdSummary") %>%
+    pivot_wider(
+        id_cols = c("Hia5"),
+        values_from = c(m6a_percent),
+        names_from = c(type),
+    ) %>%
+    ggplot(aes(y = `Mass spec`, x=fibertools)) +
+    geom_abline(aes(slope=1, intercept=0), linetype="dashed")+
+    #geom_smooth(method = "lm", se=F) +
+    geom_point(size=3, alpha=0.75) +
+    geom_text(
+        aes(x=4, y=5, label="y = x")
+    )+
+    stat_cor(r.digits = 3, p.digits = 3) +
+    scale_x_continuous("Fibertools percent m6A",
+       trans="log10", #scales::pseudo_log_trans(),
+        #breaks = c(1,10,100,1000),
+        #labels = c("0", "10", "100", "1,000"),
+        #minor_breaks = seq(1, 10, 1),
+    ) +
+    scale_y_continuous("MS/MS percent m6A", trans="log10") +
+    annotation_logticks(side="lb") +
+    #scale_color_manual("", values=cur_colors, labels=cur_labels) + 
+    theme_minimal_grid() +
+    theme(
+        #legend.position="top",
+        legend.text=element_text(size=11),
+    )
+my_ggsave("Figures/m6a-percent-v2.pdf", height=5, width=6)
+```
 
 # ML calls vs threshold 
 ```{r}
@@ -231,30 +270,6 @@ my_ggsave("Figures/WGA-by-ML-tag.pdf", height=5, width=4)
 
 # load npz files
 ```{r}
-load_ipd_from_npz = function(file){
-    np <- import("numpy")
-    #npz <- np$load("tmp.npz")
-    #npz <- np$load("ml_data/PS00075_2.val.npz")
-    print(file)
-    npz = np$load(file)
-    fibers = npz["fibers"]
-    labels = npz["labels"]
-    n_rows = min(5e6, length(labels))
-    print(n_rows)
-    f = npz["features"]
-    print("done reading features")
-    ipd = f[,5,]
-    raw_data = data.table(ipd)
-    raw_data$label = labels
-    raw_data$fiber = fibers
-    raw_data %>% 
-        pivot_longer(
-            colnames(raw_data)[1:15]
-        ) %>%
-        mutate(
-            name = factor(name, levels =paste0("V", seq(15)))
-        )
-}
 ipd_2.0 = load_ipd_from_npz("npz_r_data/2.0.npz")
 ft_2.0 = load_ipd_from_npz("npz_r_data/ft_2.0.npz")
 ipd_2.2 = load_ipd_from_npz("npz_r_data/2.2.npz")
@@ -262,6 +277,8 @@ ft_2.2 = load_ipd_from_npz("npz_r_data/ft_2.2.npz")
 ipd_3.2 = load_ipd_from_npz("npz_r_data/3.2_fiberseq.npz")
 ft_3.2 = load_ipd_from_npz("npz_r_data/ft_3.2.npz")
 ft_Revio = load_ipd_from_npz("npz_r_data/Revio.npz")
+ft_new_revio = load_ipd_from_npz("revio-training/t.bam.npz")
+new_new_revio = load_ipd_from_npz("revio-training/tmp.revio.npz") 
 #ipd_large_2.2 = load_ipd_from_npz("results/PS00109_2/ml/PS00109_2.npz")
 #ipd_3.2_2 = load_ipd_from_npz("npz_r_data/3.2_AoU.npz")
 #ipd_3.2_3 = load_ipd_from_npz("npz_r_data/3.2_m6ATP.npz")
@@ -276,7 +293,9 @@ long_ipd = bind_rows(
         #ipd_3.2_AoU=ipd_3.2_2,
         #ipd_3.2_m6ATP=ipd_3.2_3, # not a good one because dont have nucs to subset from
         #ipd_large_2.2=ipd_large_2.2,
-        ft_Revio=ft_Revio
+        ft_Revio=ft_Revio,
+        ft_new_revio=ft_new_revio,
+        new_new_revio=new_new_revio
     ),
     .id = "chem"
 )
@@ -419,3 +438,53 @@ fi %>%
 ```
 
 
+
+# kmer m6a counts 
+```{r}
+kmer.df = fread("Tables/m6a_kmers.tbl.gz")%>%
+    mutate( 
+        sm = gsub("_ML.fiberseq", "", RG),
+        kmer_percent = size/raw_count * 100
+    ) %>%
+    merge(ms_tbl,by="sm", all.x=TRUE) %>%
+    filter(size < raw_count) %>%
+    filter(size > 0) %>%
+    arrange(m6a_percent) %>%
+    mutate(
+        sm=factor(sm, levels=unique(sm))
+    )
+```
+
+```{r}
+p = kmer.df %>% 
+    filter(sm == "PS00243") %>%
+    ggplot( aes(fill=m6a_percent)) +
+    geom_histogram(aes(x=kmer_percent),binwidth=0.5, color="black", alpha=0.75) +
+    facet_col(~sm, scales="free_y")+
+    scale_y_continuous("k-mer count", label=comma )+
+    scale_x_continuous("Percent m6A", label=comma, limits=c(0,100))+
+    scale_fill_continuous("MS/MS\n% m6A")+
+    theme_minimal_grid()+
+    theme(legend.position="right")
+if(F){
+    p = p + 
+    geom_label_repel(
+        data = kmer.df %>% group_by(sm, m6a_percent) %>% summarise,
+        aes(x=m6a_percent, y=0, label=round(m6a_percent,1)), 
+        size=2.5,
+        alpha=0.85,
+        fill="white",
+        #color="darkred",
+        nudge_y=10
+    ) + 
+    geom_vline(
+        data = kmer.df %>% group_by(sm, m6a_percent) %>% summarise,
+        aes(xintercept=m6a_percent), 
+        linetype="dashed",
+        color="red",
+        size=0.75
+    )
+}
+p
+my_ggsave("Figures/kmer.pdf", height=8, width=12)
+```

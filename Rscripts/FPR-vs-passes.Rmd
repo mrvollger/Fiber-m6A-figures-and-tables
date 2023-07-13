@@ -1,0 +1,160 @@
+#
+# WGA
+#
+```{r}
+ff="validation_data/WGA.low.ml.ft.tbl.gz"
+m6a_vs_ml_tbl = read_m6a(
+    ff,
+    ref=F,
+    min_ml=244
+) 
+AT_bp = fread(glue("hck -z  -F sam_flag -F fiber -F total_AT_bp -F ec {ff}")) %>%
+    filter(sam_flag <= 16) 
+
+fiber_tbl = m6a_vs_ml_tbl %>% 
+    filter(type=="m6A") %>%
+    merge(AT_bp, by="fiber") %>%
+    group_by(fiber, ec, total_AT_bp) %>%
+    summarise(
+        total_m6a_bp = n()
+    )
+fiber_tbl
+```
+
+```{r}
+tdf = fiber_tbl %>%
+    mutate(
+        ccs_passes = round(ec)
+    ) %>%
+    group_by(ccs_passes) %>%
+    summarise(
+        n(),
+        percent_m6a=mean(sum(total_m6a_bp)/sum(total_AT_bp)) 
+    ) %>%
+    arrange(ccs_passes) %>%
+    data.table()
+    
+```
+
+```{r}
+tdf %>%
+    ggplot(aes(x=ccs_passes, y = percent_m6a)) +
+    geom_point(color="purple", size=0.75) +
+    geom_line(color="purple") +
+    geom_point(aes(y=1, x=0), size=0, color="white") +
+    scale_y_continuous("Percent m6A in WGA", 
+        label=percent, 
+        #trans="log10"
+    ) +
+    scale_x_continuous("# of CCS passes") +
+    #theme_minimal_grid()+
+    facet_zoom2(
+        ylim = c(0,0.025),
+        horizontal=FALSE,
+        zoom.size=1,
+    ) + 
+    theme_bw() +
+    theme()
+my_ggsave("Figures/WGA-FPR-vs-passes.pdf", height=5, width=7)
+```
+
+#
+# Plasmid
+#
+```{r}
+dam_positions = c(
+    230,
+372,
+462,
+634,
+774,
+1073,
+1825,
+2023,
+2083,
+2168,
+2902,
+2938,
+2955,
+3213,
+3259,
+3277,
+3618,
+3723,
+3735,
+3813,
+3821,
+3832,
+3907)
+dam_positions = sort(c(dam_positions+1, dam_positions+2))
+hsd_positions = c(
+    2916, #seq(2808, 2820),
+    2925 #seq(2915, 2927)
+)
+
+start = 1000 
+end = 1000
+mid = round((start+end)/2)
+region = glue("linear_LeaGFP\t{mid}\t{mid+1}")
+fileConn<-file("temp.bed")
+writeLines(c(region), fileConn)
+close(fileConn)
+
+files = c("validation_data/from_ben/aln.m6a.1.bam", "validation_data/from_ben/aln.m6a.2.bam")
+files
+
+dfs = list()
+dfs2 = list()
+for (file in files) {
+    cmd = glue('ft center -r {file} temp.bed')
+    dfs[[file]]=fread(cmd=cmd)
+    cmd = glue("samtools view -u -M -L temp.bed {file} | ft extract -s --all -")
+    dfs2[[file]]=fread(cmd=cmd)
+}
+
+fiber_tbl = bind_rows(dfs2) %>%
+    group_by(fiber, ec, total_AT_bp, total_m6a_bp) %>%
+    summarise(
+        query_name = unique(fiber)
+    )
+```
+
+
+```{r}
+z = unique(dfs[[1]]$query_name)
+tdf = fiber_tbl %>% 
+    mutate(
+        ccs_passes = round(ec)
+    ) %>%
+    filter(fiber %in% z ) %>%
+    group_by(ccs_passes) %>%
+    summarise(
+        n(),
+        percent_m6a=mean(sum(total_m6a_bp)/sum(total_AT_bp)) 
+    ) %>%
+    arrange(ccs_passes) %>%
+    data.table()
+    
+```
+
+```{r}
+tdf %>%
+    ggplot(aes(x=ccs_passes, y = percent_m6a)) +
+    geom_point(color="purple", size=0.75) +
+    geom_line(color="purple") +
+    geom_point(aes(y=1, x=0), size=0, color="white") +
+    scale_y_continuous("Percent m6A in negative control", 
+        label=percent, 
+        #trans="log10"
+    ) +
+    scale_x_continuous("# of CCS passes") +
+    #theme_minimal_grid()+
+    facet_zoom2(
+        ylim = c(0,0.04),
+        horizontal=FALSE,
+        zoom.size=1,
+    ) + 
+    theme_bw() +
+    theme()
+my_ggsave("Figures/Plasmid-FPR-vs-passes.pdf", height=5, width=7)
+```

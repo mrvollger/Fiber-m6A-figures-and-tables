@@ -125,9 +125,9 @@ s=1.2
 my_ggsave("Figures/HMBS_reference.pdf", width=9, height=5)
 ```
 
-
-
-
+#
+# Plasmid
+#
 ```{r}
 dam_positions = c(
     230,
@@ -154,6 +154,10 @@ dam_positions = c(
 3832,
 3907)
 dam_positions = sort(c(dam_positions+1, dam_positions+2))
+hsd_positions = c(
+    2916, #seq(2808, 2820),
+    2925 #seq(2915, 2927)
+)
 
 start = 1000 
 end = 1000
@@ -163,7 +167,7 @@ fileConn<-file("temp.bed")
 writeLines(c(region), fileConn)
 close(fileConn)
 
-files = c("validation_data/from_ben/aln.m6a.bam")
+files = c("validation_data/from_ben/aln.m6a.1.bam", "validation_data/from_ben/aln.m6a.2.bam")
 files
 
 dfs = list()
@@ -176,7 +180,7 @@ for (file in files) {
 }
 
 fiber_tbl = bind_rows(dfs2) %>%
-    group_by(fiber, ec) %>%
+    group_by(fiber, ec, total_AT_bp, total_m6a_bp) %>%
     summarise(
         query_name = unique(fiber)
     )
@@ -195,6 +199,7 @@ combo = bind_rows(dfs, .id="tool") %>%
     mutate(
         case=case_when(
             centered_start %in% dam_positions ~ "Dam",
+            centered_start %in% hsd_positions ~ "hsdM",
             TRUE ~ "Other",
         ),
         z = factor(query_name, levels = unique(query_name)),
@@ -206,7 +211,7 @@ print(max(combo$y))
 
 ```{r}
 tdf = combo %>%
-    filter( y > 0) 
+    filter( y > 19500) 
 tdf %>%
     ggplot(
         aes(x=centered_start, color=NULL, fill=case)
@@ -240,44 +245,88 @@ my_ggsave("Figures/Plasmid_reference.pdf", width=9, height=5)
 ```
 
 ```{r}
-combo %>% 
-    group_by(centered_start,case) %>%
-    summarise(
-        count = 100*n()/length(fiber_tbl$fiber)
+tdf = combo %>% 
+    group_by(tool) %>%
+    mutate(
+        k = length(unique(query_name)),
+        tool = case_when(
+            tool == "validation_data/from_ben/aln.m6a.1.bam" ~ "Dam and hsdM negative",
+            TRUE ~ " Dam and hsdM positive"
+        ),
+        width = case_when(
+            case == "Dam" ~ 6,
+            TRUE ~ 1    
+        )
     ) %>%
-    filter(
-        #count > 50
-        #case=="Dam",
-    ) %>% 
-    data.table() %>%
+    group_by( centered_start,case, tool, k) %>%
+    summarise(
+        count = 100*n()/unique(k)
+    ) %>%
+    data.table()
+tdf %>% 
+    group_by(tool, case) %>%
+    summarise(
+        percent_m6a=mean(count)
+    )
+tdf %>%
     ggplot(
         aes(
             x=centered_start,
             y=count,
             fill=case,
+            color=case,
         ),
     ) +
-    geom_bar(
-        stat="identity"
+    geom_hline(
+        data = . %>% group_by(case, tool) %>% summarise(count = mean(count)), 
+        aes(yintercept=count, color=case),
+        linetype="dashed"
+    )+
+    geom_text_repel(
+        data = . %>% group_by(case, tool) %>% summarise(count = mean(count)), 
+        aes(y=count, x = 0, label=paste0(round(count,1), "%")),
+        direction="y",
+        min.segemnt.length = 0,
+        force = 8,
+        nudge_y=1,
+        size = 3,
+    )+
+    geom_point(data = . %>% filter(case != "Other"), shape=21, size = 1, color="black") + 
+    geom_bar(,
+        color=NA,
+        stat="identity",
+        width = 4, #. %>% select(width) %>% as.list(),
     ) +
     geom_text_repel(
-        data = . %>% filter(case=="Dam"),
+        data = . %>% filter(case=="Dam" & tool==" Dam and hsdM positive") %>% filter(FALSE),
         aes(label=round(count,1)),
-        size=2,
+        size=2.5,
         min.segment.length=0,
         max.overlaps=100,
+        segment.alpha=0.75,
+        segment.size = 0.1,
+        arrow = arrow(length = unit(0.015, "npc"))
+        #nudge_x=50, 
+        #direction="x",
         #vjust=0.1,
     ) +
     scale_y_continuous(
         "Percent m6A",
+        #limits = c(0,110),
+        breaks = seq(0,100,25),
     )+
+    facet_col(~tool) +
     scale_x_continuous("Plasmid position", label=comma) +
     scale_fill_manual("",
-        values = c("Other"=Teal, "Dam"="purple"),
+        values = c(Other=Teal, Dam="purple", hsdM="orange"),
+    ) +
+    scale_color_manual("",
+        values = c(Other=Teal, Dam="purple", hsdM="orange"),
     ) +
     theme_minimal_hgrid() +
     theme(
-        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+        legend.position="none",
+        #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
     )
 my_ggsave("Figures/Plasmid_simple_reference.pdf", width=9, height=5)
 

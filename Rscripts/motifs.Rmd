@@ -54,6 +54,7 @@ motif_df
 ```{r}
 motif_df %>% 
     filter(is_genomic) %>%
+    filter(min_ml>=179) %>%
     pivot_longer(
         cols=c("motifs-covered-by-m6A", "m6A-within-motifs", "my_expected_m6a_within_motifs")
     ) %>%
@@ -115,6 +116,7 @@ motif_df %>%
     mutate(
         off_target_rate = `m6A-coverage` - `m6A-within-motifs`
     ) %>%
+    filter(min_ml>=179) %>%
     #filter(min_ml >=200) %>%
     ggplot(
         aes(x=min_ml/256*100,
