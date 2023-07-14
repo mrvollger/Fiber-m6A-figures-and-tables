@@ -17,38 +17,45 @@ ff="CAGE-validation/ft.tbl.gz"
 b=fread(ff)
 keep=unique(a$query_name)
 keep2=unique(b$query_name)
+bin_size = 20
 cage = bind_rows(list(fibertools=b, subread=a), .id="Tool") %>% 
     filter(centered_position_type == "m6a" ) %>%
     filter(query_name %in% keep) %>%
-    filter(query_name %in% keep2) 
-
-cage = cage %>%
+    filter(query_name %in% keep2) %>%
     mutate(
         group = 5000 * floor(query_length / 5000), 
         group = case_when(
-            #query_length > 35000 ~ 35000,
-            query_length > 30000 ~ 30000,
-            #query_length > 27500 ~ 27500,
-            TRUE ~ group,
+            group > 30000 ~ 30000,
+            TRUE ~ group
         ),
-        bin = 10*floor(centered_start/10) + 5,
-    )
+        bin = bin_size*floor(centered_start/bin_size) + bin_size/2,
+    ) 
 
-cage %>% 
-    group_by(group) %>%
-    summarise(
-        n(),
-        length(unique(query_name)),
+z=data.table(
+    label = paste(comma(unique(cage$group)), "-", comma(unique(cage$group+ 5000)), "bp", sep=" "),
+    group=unique(cage$group)
+)
+
+cage = merge(cage,z, by="group") %>%
+    arrange(group) %>%
+    mutate(
+        label = factor(label, levels=unique(label)),
     )
+#cage$label[cage$group == 30000] = factor("> 30,000 bp")
 ```
 
 ```{r}
-cage_plot=cage %>% 
-    group_by(group, bin, Tool) %>%
-    #filter(bin < 1000 & bin > -1000) %>%
-    summarise(
-        value = n()
+p.data=cage %>% 
+    group_by(label) %>%
+    mutate(
+        n_fibers = length(unique(query_name))
     ) %>%
+    group_by(label, bin, Tool, n_fibers) %>%
+    summarise(
+        value = n(),
+    )
+p.sum = p.data %>% group_by(label, n_fibers) %>% summarise(value=max(value))
+cage_plot= p.data%>%
     #filter(query_length < 30e3)  %>%
     #group_by(group) %>% filter(row_number() < 1e5) %>% 
     ggplot(
@@ -58,8 +65,21 @@ cage_plot=cage %>%
         binwidth=10,
         position="identity",
         stat="identity",
-        alpha=0.75,
-    )+
+        alpha=0.85,
+    ) +
+    geom_text(
+        data = p.sum,
+        aes(
+            label=paste("n = ", comma(n_fibers)),
+            x=-1900,
+            y=value*0.90,
+            fill=NULL,
+        ),
+        hjust=0,
+        vjust=0,
+        size=2.5,
+        color="black"
+    ) +
     scale_x_continuous("Distance from CAGE positive TSS", label=comma) +
     scale_y_continuous("# m6A calls", label=comma)+
     scale_fill_manual(
@@ -68,7 +88,7 @@ cage_plot=cage %>%
     )+
     theme_minimal_grid(font_size=10) +
     facet_wrap(
-        ~paste(">", comma(group), "bp"),
+        ~label,
         scale="free_y",
         ncol=2
     ) +

@@ -15,3 +15,15 @@ hackathon.code-workspace
 ml_data/
 models/
 .snakemake
+CAGE-validation/
+EcoGII/
+ONT/
+archived_logs/
+from_pb/
+data/
+bed-files/
+m6a-calling/
+revio-training/
+training-data/
+npz**
+validation-data/
