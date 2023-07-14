@@ -26,4 +26,6 @@ m6a-calling/
 revio-training/
 training-data/
 npz**
-validation-data/
+validation-data/**
+validation_data/**
+ipdSummary/**
