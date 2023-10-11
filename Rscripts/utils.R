@@ -43,6 +43,10 @@ read_m6a = function(file, my_tag = "", min_ml = 200, nrows=Inf, ref=TRUE, ec_min
         print("filtering by sam flag")
         tmp = tmp %>% filter(sam_flag <= 16)
     }
+    if(!"RG" %in% colnames(tmp)){
+        tmp$RG = "NA"
+    }
+
         #[tmp$fiber %in% sample(unique(tmp$fiber), 500)] 
     tmp = tmp %>% 
         mutate(

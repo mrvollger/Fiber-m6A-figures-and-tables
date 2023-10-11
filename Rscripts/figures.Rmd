@@ -37,6 +37,18 @@ if(sm == "PS00109_1"){
 } else{
     all_revio = read_m6a("data/Revio.semi.tbl.gz", my_tag="Revio", ref=F, min_ml=230)
 }
+ipd=fread("data/PS00109_1.ipd.tbl.gz")
+colnames(ipd) = c("fiber", "x", "type", "m6A", "z", "w", "strand", "a", "b")
+ipd$m6a_qual=255
+ipd$tag="IPD"
+ipd$start = ipd$m6A
+ipd=ipd %>% 
+    group_by(fiber) %>%
+    mutate(
+        fiber_length=max(m6A)
+    ) %>%
+    data.table()
+
 pb = NULL
 chem="2.2"
 ```
@@ -62,13 +74,14 @@ if(simple==""){
     )
     dists_df = rbindlist(list(cnn, xgb, gmm, semi, revio)) 
 }else{
-    cur_colors = MODEL_COLORS[c("GMM","SEMI", "Revio")]
+    cur_colors = MODEL_COLORS[c("GMM", "IPD", "Revio", "SEMI")]
     cur_labels = c(
         glue("Subread model ({chem})"),
-        glue("Semi-supervised CNN ({chem})"),
-        "Semi-supervised CNN (Revio)"
+        glue("ipdSummary ({chem})"),
+        "Semi-supervised CNN (Revio)",
+        glue("Semi-supervised CNN ({chem})")
     )
-    dists_df = rbindlist(list(gmm, semi, revio)) 
+    dists_df = rbindlist(list(gmm, semi, revio, ipd), fill=TRUE) 
 }
 if(is.null(revio)){
     cur_colors = head(cur_colors, -1)
@@ -95,8 +108,9 @@ if(length(cur_labels) >3){
 }
 source('Rscripts/utils.R')
 calls_per_group = dists_df %>% 
-    filter(type=="m6A" & dist > 30 & dist < 300) %>%
-    group_by(tag) %>% summarise(count=n())
+    filter(type=="m6A" & dist > 35 & dist < 300) %>%
+    group_by(tag) %>% summarise(count=n()) %>%
+    filter(tag!="IPD")
 min_count = min(calls_per_group$count)
 min_count
 for(with_revio in c(FALSE,TRUE)){
@@ -111,7 +125,7 @@ for(with_revio in c(FALSE,TRUE)){
         tdf = dists_df %>% filter(tag != "Revio")
     }
     p = tdf %>%
-        filter(type=="m6A" & dist > 30 & dist < 300) %>%
+        filter(type=="m6A" & dist > 35 & dist < 300) %>%
         group_by(tag) %>%
         mutate(row_id = seq(n())) %>%
         filter(row_id <= min_count) %>%
@@ -145,7 +159,7 @@ for(with_revio in c(FALSE,TRUE)){
 
     }
     my_ggsave(
-        "Figures/{sm}-distance-between-adjacent-m6A{simple}{rrevio}.pdf", 
+        "Figures/{sm}-distance-between-adjacent-m6A{simple}{rrevio}_2023-10-11.pdf", 
         height=5,
         width=6
     )
@@ -174,7 +188,7 @@ t = dists_df %>%
         count = n(),
         index = list(seq(0, max(start)) %in% start)
     )  %>%
-    filter(count > 400) %>%
+    filter(count > 400 | tag=="IPD") %>%
     ungroup() %>%
     group_by(tag) %>%
     summarise(
@@ -224,7 +238,7 @@ for(with_revio in c(FALSE,TRUE)){
             legend.position = "top",
             legend.text=element_text(size=8)
             )
-    my_ggsave("Figures/{sm}-autocorrelation-between-m6A{simple}{revio}.pdf", height=5, width=6)
+    my_ggsave("Figures/{sm}-autocorrelation-between-m6A{simple}{revio}_2023-10-11.pdf", height=5, width=6)
 }
 ```
 

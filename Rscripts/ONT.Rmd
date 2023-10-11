@@ -33,10 +33,12 @@ AT_bp
 ont_tbl = bind_rows(list(m6A=a, control=b), .id="ID")%>% 
     filter(type=="m6A") 
 ont_tbl %>% group_by(ID) %>% summarise(n())
+mass_spec_value = 14.67
+
 ```
 
 ```{r}
-min_t = 150
+min_t = 1
 t = seq(min_t,256)
 plot_onts = list()
 plot_ont = ont_tbl %>% 
@@ -45,21 +47,24 @@ plot_ont = ont_tbl %>%
     merge(AT_bp, by=c("fiber")) %>%
     mutate(
         total_AT_bp = total_AT_bp/2,
+    ) %>% group_by(ID) %>%
+    mutate(
+        AT_bp = sum(unique(total_AT_bp))
     )
+
 for(thresh in t){
     print(thresh)
     z = plot_ont %>%
-    mutate(threshold = thresh) %>%
-    filter(m6a_qual >= threshold | is.na(m6a_qual)) %>%
-    group_by(threshold, ID) %>%
-    summarise(
-        m6a = sum(type=="m6A"),
-        AT_bp = sum(unique(total_AT_bp))
-    ) %>%
-    mutate(
-        m6a_frac = 100*m6a/AT_bp,
-        ML_FPR = 100*(1.0 - threshold/256),  
-    )
+        mutate(threshold = thresh) %>%
+        filter(m6a_qual >= threshold | is.na(m6a_qual)) %>%
+        group_by(threshold, ID, AT_bp) %>%
+        summarise(
+            m6a = sum(type=="m6A"),
+        ) %>%
+        mutate(
+            m6a_frac = 100*m6a/AT_bp,
+            ML_FPR = 100*(1.0 - threshold/256),  
+        )
     plot_onts[[thresh-min_t+1]] = z
 }    
 zz = bind_rows(plot_onts)
@@ -67,8 +72,23 @@ zz
 ```
 
 ```{r}
-zz %>%
+tmp=zz %>%
+    filter(threshold > 150) %>%
     ggplot(aes(y= m6a_frac, x=threshold/256*100, color=ID)) +
+    geom_hline(
+        aes(yintercept=mass_spec_value),
+        linetype="dashed",
+        color="darkred",
+        size=1.2
+    ) +
+    geom_text(
+        data = . %>% head(1),
+        label=paste0("MS/MS = ", round(mass_spec_value,2),"%"),
+        y=mass_spec_value,
+        x=95,
+        color="darkred",
+        vjust=-0.5,
+    )+
     geom_line() +
     geom_point(
         #data = . %>% filter(threshold==target_ml_value),
@@ -87,8 +107,8 @@ zz %>%
         #limits=c(0, max_fpr)
     ) + 
     #coord_fixed() +
-    theme_minimal_grid()+
-    scale_color_discrete("", labels=c("Control", "ONT Fiber-seq"))+
+    theme_minimal_grid(font_size=10)+
+    scale_color_discrete("", labels=c("Negative control", "ONT Fiber-seq"))+
     theme(
         legend.position="top",
     )
@@ -101,42 +121,72 @@ zzz = zz %>% pivot_wider(
         names_from=c(ID),
         values_from=c(m6a_frac, ML_FPR),
     ) %>%
+    group_by() %>%
     mutate(
         value = m6a_frac_control/( m6a_frac_m6A  ),
         real_m6a = m6a_frac_m6A - m6a_frac_control,
-        fiber_seq_range = real_m6a > 5 & real_m6a < 10,
-    ) 
-
-zzz %>%
-    ggplot(aes(y=value, x=threshold/256*100)) +
+        fiber_seq_range = real_m6a > 5 & real_m6a < 15,
+        diff = abs(real_m6a-mass_spec_value),
+        closest = min(diff) == diff,
+        x=threshold/256*100,
+    ) %>%
+    mutate(
+        precision = real_m6a/m6a_frac_m6A,
+        recall = pmin(real_m6a/mass_spec_value),
+        closest = floor(100*precision) %% 10 == 0,
+    ) %>%
+    filter(
+        precision > 0.5
+    )
+zzz
+show_vals = c(140, 178, 210, 234, 249, 253)
+x=zzz %>%
+    ggplot(aes(y=recall, x=precision)) +
     geom_line() +
+    geom_vline(
+        aes(xintercept=0.95),
+        linetype="dashed",
+        color="darkred",
+        size=1.2
+    ) +
     geom_point(
-        aes(color=fiber_seq_range)
+        aes(
+            #color=fiber_seq_range
+        )
         #data = . %>% filter(threshold==target_ml_value),
     ) +
-    geom_vline(
-        data = . %>% 
-            filter(fiber_seq_range==TRUE) %>% 
-            group_by(fiber_seq_range) %>%
-            arrange(real_m6a) %>%
-            filter(row_number()==1 | row_number()==n()),
-            #filter(real_m6a==pmax(real_m6a) | real_m6a==pmin(real_m6a)),
+    geom_text_repel(
+        data = . %>% filter(threshold %in% show_vals),
         aes(
-            xintercept=threshold/256*100,
-        )
+            #label=paste(
+            #    "", round(mass_spec_value,2), "% m6A by MS/MS\n",
+            #    round(ML_FPR_control,2), "% estimated FPR"
+            #), 
+            label=percent(recall),
+        ),
+        hjust=0,
+        min.segment.length = 0,
+        nudge_y=.1,
+        nudge_x=0.1,
     )+
     #geom_abline(slope=1, intercept=0, color="darkred", linetype="dashed") +
-    scale_x_continuous("Dorado estimated precision (%)") +
+    scale_x_continuous(
+        "Precision (estimated using control sample)",
+        labels=percent,
+    ) +
         #limits=c(0, max_fpr)
     #) +
-    scale_y_continuous("Estimated % of m6A calls that are false",
-        labels=percent
+    scale_y_continuous(
+        "Recall (estimated using control sample and MS/MS)",
+        labels=percent,
+        limits=c(0,1),
     ) + 
     #annotation_logticks(side="l")+
     #coord_fixed() +
     #scale_colour_steps2("Estimated % m6A", breaks=seq(1,20))+
+    coord_cartesian(clip = "off") +
     scale_color_discrete("Expected range\nfor Fiber-seq")+
-    theme_minimal_grid()+
+    theme_minimal_grid(font_size=12)+
     theme(
         legend.position="top",
     )
