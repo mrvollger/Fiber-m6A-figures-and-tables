@@ -74,12 +74,12 @@ if(simple==""){
     )
     dists_df = rbindlist(list(cnn, xgb, gmm, semi, revio)) 
 }else{
-    cur_colors = MODEL_COLORS[c("GMM", "IPD", "Revio", "SEMI")]
+    cur_colors = MODEL_COLORS[c("GMM", "IPD", "SEMI", "Revio")]
     cur_labels = c(
         glue("Subread model ({chem})"),
         glue("ipdSummary ({chem})"),
-        "Semi-supervised CNN (Revio)",
-        glue("Semi-supervised CNN ({chem})")
+        glue("Semi-supervised CNN ({chem})"),
+        "Semi-supervised CNN (Revio)"
     )
     dists_df = rbindlist(list(gmm, semi, revio, ipd), fill=TRUE) 
 }
@@ -94,7 +94,11 @@ dists_df[
     by=list(tag, type, fiber)
 ]
 dists_df = dists_df[count_per_fiber/fiber_length > 0.02 & type == "m6A"]
-dists_df = dists_df[order(tag, type, fiber, start)]
+dists_df = dists_df[order(tag, type, fiber, start)] %>%
+    mutate(
+        tag = factor(tag, levels=names(cur_colors))
+    ) %>%
+    data.table
 
 dists_df %>% group_by(tag) %>% summarise(n())
 dists_df %>% group_by(tag) %>% summarise(n()/sum(unique(fiber_length))*100)
@@ -206,10 +210,10 @@ t %>% group_by(tag) %>% summarise(n())
 t$change <- c(0, (t$auto[1:(length(t$auto)-1)] * t$auto[2:length(t$auto)]) <= 0)
 t[change==1]
 for(with_revio in c(FALSE,TRUE)){
-    revio=""
+    rrevio=""
     tdf = t
     if(with_revio){
-        revio="-revio"
+        rrevio="-revio"
     }else{
         tdf = t %>% filter(tag != "Revio")
     }
@@ -233,12 +237,12 @@ for(with_revio in c(FALSE,TRUE)){
         theme_minimal_grid() + 
         scale_y_continuous("Autocorrelation between m6A events") + 
         scale_x_continuous("Lag between m6A events") + 
-        guides(color = guide_legend(override.aes = list(size = 2, shape="") ) )+
         theme(
             legend.position = "top",
             legend.text=element_text(size=8)
-            )
-    my_ggsave("Figures/{sm}-autocorrelation-between-m6A{simple}{revio}_2023-10-11.pdf", height=5, width=6)
+        )+
+        guides(color = guide_legend(nrow=2, override.aes = list(size = 1, shape="") ) )
+    my_ggsave("Figures/{sm}-autocorrelation-between-m6A{simple}{rrevio}_2023-10-11.pdf", height=5, width=6)
 }
 ```
 

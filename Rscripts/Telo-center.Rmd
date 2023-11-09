@@ -1,0 +1,239 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE}
+source('Rscripts/utils.R')
+library(stringr)
+```
+
+```{r}
+wide_center = fread("telomere-figure/telo.center.tbl.gz")
+wide_center$ID = "query"
+wide_center_ref = fread("telomere-figure/telo.center.ref.tbl.gz")
+wide_center_ref$ID = "ref"
+wide_center = bind_rows(wide_center, wide_center_ref) %>%
+    arrange(-centered_query_start) %>%
+    group_by(strand, chrom, RG) %>%
+    mutate(
+        query_level=factor(as.numeric(factor(query_name, levels=unique(query_name)))),
+    ) %>%
+    mutate(
+        strand = factor(strand, levels=c("+", "-")),
+    ) %>%
+    data.table()
+colnames(wide_center)
+max_extend = 5000
+```
+
+```{r}
+add_patterns = function(wide_center, my_pattern, negate=FALSE){
+    center_width = nchar(wide_center$subset_sequence[[1]])
+    z=wide_center %>%
+        filter(ID=="query") %>%
+        select(chrom, centering_position, query_name, RG,
+            subset_sequence,centered_query_start,centered_query_end,strand, query_level
+        ) %>%
+        mutate(
+            start = str_locate_all(subset_sequence, my_pattern) %>%  map(~ .x[,1]),
+            end = str_locate_all(subset_sequence, my_pattern) %>% map(~ .x[,2])
+        ) %>%
+        select(-subset_sequence) %>%
+        unnest(cols=c(start,end)) %>%
+        mutate(
+            telo_start=start-(center_width+1)/2,
+            telo_end=end-(center_width+1)/2,
+        ) %>%
+        filter(telo_end<max_extend) %>%
+        select(-start,-end)
+    w = z %>% 
+        group_by(
+            chrom, centering_position, query_name, RG, strand, query_level
+        ) %>%
+        sample_n(1) %>%
+        mutate(
+            telo_start = max_extend-1,
+            telo_end = max_extend,
+        )
+
+    bind_rows(list(z,w))
+}
+
+telo ='(CCCTAA|CCTAAC|CTAACC|TAACCC|AACCCT|ACCCTA)+'
+yes_telo_data = add_patterns(wide_center, telo)  %>% 
+    dplyr::group_by(
+        chrom, centering_position, query_name, RG,
+        centered_query_start, centered_query_end, strand, query_level,
+    ) %>%
+    dplyr::arrange(
+        telo_start, telo_end, .by_group = TRUE
+    ) %>%
+    data.table(); yes_telo_data
+
+# find not telo data
+not_telo_data = yes_telo_data %>%
+    #group_by(chrom, query_name, strand, RG) %>%
+    #filter(telo_start < 0 ) %>%
+    mutate(
+        tmp=telo_start,
+        telo_start=lag(telo_end),
+        telo_end=tmp,
+    ) %>%
+    select(-tmp) %>%
+    mutate(
+        telo_start=case_when(
+            is.na(telo_start) ~ centered_query_start,
+            TRUE ~ telo_start,
+        )
+    ) #%>%filter(telo_start < 0)
+
+telo_data = bind_rows(
+        list(Telo=yes_telo_data, NotTelo=not_telo_data), .id="type"
+    ) %>% mutate(
+        width = telo_end - telo_start,
+    ) %>% 
+    filter(width > 0) %>%
+    arrange(
+        query_name, telo_start
+    ) %>%
+    mutate(
+        type=case_when(
+            telo_end > 0 & type=="NotTelo" ~ "DNA",
+            TRUE ~ type,
+        )
+    )
+
+#cpg = "CG"
+#cpg_data = add_patterns(wide_center, cpg)
+
+# check telo data
+one_read = telo_data %>% filter(chrom=="chr11_MATERNAL", query_level==6, strand=="+") %>% arrange(telo_start)  %>% data.table(); one_read
+one_read %>% summarise(sum(telo_end-telo_start)) 
+```
+
+```{r}
+make_long = function(wide_center) {
+    tlong_center = wide_center %>% 
+    select(-subset_sequence) %>%
+    select(-query_sequence) %>%
+    select(-contains("nuc_")) %>%
+    select(-contains("msp_"))
+
+    m6a_split = tlong_center %>%
+        select(-contains("5mC")) %>%
+        cSplit(c("m6a_qual", "centered_m6a_positions"), direction = "long") %>%
+        mutate(type="m6a") %>%
+        rename(
+            pos = centered_m6a_positions,
+            qual = `m6a_qual`,
+        ) %>%
+        data.table
+
+    cpg_split = tlong_center %>%
+        select(-contains("m6a")) %>%
+        cSplit(c("5mC_qual", "centered_5mC_positions"), direction = "long") %>%
+        mutate(type="5mC") %>%
+        rename(
+            pos = centered_5mC_positions,
+            qual = `5mC_qual`,
+        ) %>%
+        data.table
+
+    bind_rows(m6a_split, cpg_split)
+}
+
+long_center = make_long(wide_center) %>%
+    filter( 
+        !(ID=="query" & pos >= 0) &
+        !(ID=="ref" & pos < 0) 
+    ) %>%
+    filter(pos < max_extend) %>%
+    mutate(
+        centered_query_end=case_when(
+            centered_query_end > max_extend ~ max_extend,
+            TRUE ~ centered_query_end
+        )
+    ) %>%
+    data.table()
+
+colnames(long_center)
+long_center
+```
+
+```{r}
+pages = length(unique(long_center$chrom))/2
+qnames=unique(long_center$query_name)
+pdf("Figures/telo.pdf", height=12, width=16)
+for(page in seq(pages)){
+    print(page)
+    z= long_center %>%
+    ggplot(aes(x=pos, y=query_level, width=3, height=0.9)) +
+    geom_segment(
+        data = . %>% 
+            select(
+                chrom,query_level, centered_query_start, 
+                centered_query_end, strand, RG
+            ) %>% unique,
+        aes(
+            x=centered_query_start, xend=centered_query_end,
+            yend=query_level, 
+        )
+    ) + 
+    geom_rect(
+        data=telo_data %>% filter(query_name %in% qnames),
+        aes(
+            x=NULL, y=NULL,
+            xmin=telo_start, xmax=telo_end,
+            ymin=as.numeric(query_level)-0.2, ymax=as.numeric(query_level)+0.2,  
+            fill=type,
+        ),
+        alpha=0.75
+    ) +
+    geom_rect(
+         aes(
+            x=NULL, y=NULL,
+            xmin=pos, xmax=pos+3,
+            ymin=as.numeric(query_level)-0.45, ymax=as.numeric(query_level)+0.45,  
+            fill=type,
+        ),
+        alpha=1,
+    ) +
+    geom_vline( 
+        aes(xintercept=0),
+        linetype="dashed"
+    )+
+    facet_wrap_paginate(chrom ~ strand + RG, 
+        ncol = 2, nrow=2, page=page, #scales="free_x"
+    )+
+    theme_cowplot() +
+    scale_fill_manual(
+        values=c(
+            `5mC`="#C4A484",
+            m6a="purple",
+            Telo="lightblue",
+            NotTelo="red",
+            DNA="lightgray"
+        )
+    )+
+    theme(
+        legend.position="top"
+    ) + 
+    scale_x_continuous(
+        "Genomic position relative to the telomere start",
+        label=comma,
+    ) 
+    print(z)
+}
+dev.off()
+system("cp Figures/telo.pdf tmp.pdf")
+dev.off()
+```
+
+```{r}
+wide_center %>% group_by(query_name, centered_query_end, centered_query_start) %>%
+    summarise(count=n()) %>%
+    filter(count>1)
+```
