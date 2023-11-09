@@ -54,11 +54,19 @@ add_patterns = function(wide_center, my_pattern, negate=FALSE){
             chrom, centering_position, query_name, RG, strand, query_level
         ) %>%
         sample_n(1) %>%
+        rowwise() %>%
         mutate(
-            telo_start = max_extend-1,
-            telo_end = max_extend,
-        )
-
+            telo_start = list(list(
+                centered_query_start,
+                min(max_extend-1, centered_query_end-1)
+            )),
+            telo_end = list(list(
+                centered_query_start+1,
+                min(max_extend, centered_query_end)
+            )),
+        ) %>%
+        unnest(cols=c(telo_start, telo_end)) %>%
+        unnest(cols=c(telo_start, telo_end)) ; w
     bind_rows(list(z,w))
 }
 
@@ -82,13 +90,7 @@ not_telo_data = yes_telo_data %>%
         telo_start=lag(telo_end),
         telo_end=tmp,
     ) %>%
-    select(-tmp) %>%
-    mutate(
-        telo_start=case_when(
-            is.na(telo_start) ~ centered_query_start,
-            TRUE ~ telo_start,
-        )
-    ) #%>%filter(telo_start < 0)
+    select(-tmp)
 
 telo_data = bind_rows(
         list(Telo=yes_telo_data, NotTelo=not_telo_data), .id="type"
@@ -126,6 +128,7 @@ make_long = function(wide_center) {
         select(-contains("5mC")) %>%
         cSplit(c("m6a_qual", "centered_m6a_positions"), direction = "long") %>%
         mutate(type="m6a") %>%
+        filter(m6a_qual>=250) %>%
         rename(
             pos = centered_m6a_positions,
             qual = `m6a_qual`,
@@ -205,7 +208,7 @@ for(page in seq(pages)){
         aes(xintercept=0),
         linetype="dashed"
     )+
-    facet_wrap_paginate(chrom ~ strand + RG, 
+    facet_wrap_paginate(chrom ~ RG+strand , 
         ncol = 2, nrow=2, page=page, #scales="free_x"
     )+
     theme_cowplot() +
@@ -224,6 +227,7 @@ for(page in seq(pages)){
     scale_x_continuous(
         "Genomic position relative to the telomere start",
         label=comma,
+        limits=c(-10000,NA),
     ) 
     print(z)
 }
